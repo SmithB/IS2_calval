@@ -15,7 +15,7 @@ def deadtime_from_hist(t, counts, threshold, t_min):
     return tHalfMax
 
 
-thefile='/Volumes/ice2/ben/scf/plateau_03/ATL03_2018_10_02_00100111_944_01.h5'
+thefile='/Volumes/ice2/ben/scf/plateau_03/ATL03_2018_10_02_00100110_944_01.h5'
 fields=('h_ph','ph_id_pulse','pce_mframe_cnt','ph_id_channel');
 
 
@@ -73,15 +73,21 @@ for ch_num, this_delta_t in enumerate(all_delta_t):
     
     # histogram of all delta times:
         # histogram of delta time when the first channel # is less than the second
-    psub=plt.subplot(n_det,3, 3*ch_num+1)
+    psub=plt.subplot(n_det,4, 4*ch_num+1)
     count, bins, patches=plt.hist(all_delta_t[ch_num]*1.e9, t_hist*1.e9 )
     bins=bins[0:-1]+dt_hist/2  # avoids warning about count and bin being different sizes
     print('both, Ch0=%d, Ch1=%d, f_single_photon=%3.4f, F_lt 0.5=%3.4f, f_2-5=%3.4f' % (channels[ch_num], channels[ch_num+n_det], 
                                                                                 (N0[ch_num]-this_delta_t.size)/N0[ch_num], 
                                                                                  np.sum(count[bins<0.5])/N0[ch_num], np.sum(count[np.logical_and(bins>1, bins<5)])/N0[ch_num]))
     dt_est[ch_num,0]=deadtime_from_hist(bins, count, 0.5, 0.75)                                                                             
+
     # histogram of delta time when the first channel # is less than the second
-    psub=plt.subplot(n_det,3, 3*ch_num+2)
+    psub=plt.subplot(n_det,4, 4*ch_num+2)
+    ii=all_delta_ch[ch_num]==0
+    count, bins, patches=plt.hist(all_delta_t[ch_num][ii]*1.e9, t_hist*1.e9 )
+
+    # histogram of delta time when the first channel # is less than the second
+    psub=plt.subplot(n_det,4, 4*ch_num+3)
     ii=all_delta_ch[ch_num]<0
     count, bins, patches=plt.hist(all_delta_t[ch_num][ii]*1.e9, t_hist*1.e9 )
     bins=bins[0:-1]+dt_hist/2  # avoids warning about count and bin being different sizes
@@ -90,7 +96,7 @@ for ch_num, this_delta_t in enumerate(all_delta_t):
                                                                                  np.sum(count[bins<0.5])/N0[ch_num], np.sum(count[np.logical_and(bins>1, bins<5)])/N0[ch_num]))
     dt_est[ch_num,1]=deadtime_from_hist(bins, count, 0.5, 0.75)                                                                            
     # histogram of delta time when the first channel # is less than the second
-    psub=plt.subplot(n_det,3, 3*ch_num+3)
+    psub=plt.subplot(n_det,4, 4*ch_num+4)
     ii=all_delta_ch[ch_num]>0
     count, bins, patches=plt.hist(all_delta_t[ch_num][ii]*1.e9, t_hist*1.e9 )
     bins=bins[0:-1]+dt_hist/2  # avoids warning about count and bin being different sizes
@@ -109,14 +115,16 @@ for ch_num, this_delta_t in enumerate(all_delta_t):
     
     
 
-plt.subplot(4,3,1); ht1=plt.title('all')
-plt.subplot(4,3,2); ht2=plt.title('ch0 < ch1')
-plt.subplot(4,3,3); ht3=plt.title('ch0 > ch1')
-plt.subplot(4,3,8); ht4=plt.xlabel('delta time, ns')
-plt.subplot(4,3,1); hl1=plt.ylabel('ch0=%d, ch1=%d' %(channels[0], channels[4]))
-plt.subplot(4,3,4); hl2=plt.ylabel('ch0=%d, ch1=%d' %(channels[1], channels[5]))
-plt.subplot(4,3,7); hl3=plt.ylabel('ch0=%d, ch1=%d' %(channels[2], channels[6]))
-plt.subplot(4,3,10); hl4=plt.ylabel('ch0=%d, ch1=%d' %(channels[3], channels[7]))
+plt.subplot(4,4,1); ht1=plt.title('all')
+plt.subplot(4,4,2); ht2=plt.title('t(ch0) = t(ch1)')
+plt.subplot(4,4,3); ht2=plt.title('t(ch0) < t(ch1)')
+plt.subplot(4,4,4); ht3=plt.title('t(ch0) > t(ch1)')
+plt.subplot(4,4,15); ht4=plt.xlabel('delta time, ns')
+plt.subplot(4,4,1); hl1=plt.ylabel('ch0=%d, ch1=%d' %(channels[0], channels[4]))
+plt.subplot(4,4,5); hl2=plt.ylabel('ch0=%d, ch1=%d' %(channels[1], channels[5]))
+plt.subplot(4,4,9); hl3=plt.ylabel('ch0=%d, ch1=%d' %(channels[2], channels[6]))
+plt.subplot(4,4,13); hl4=plt.ylabel('ch0=%d, ch1=%d' %(channels[3], channels[7]))
 
 print(dt_est)
+plt.show()
     
