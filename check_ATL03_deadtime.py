@@ -2,7 +2,7 @@
 
 # -*- coding: utf-8 -*-
 """
-Calculate the differenes between the channel biases in the two channels in each receiver pixel from an ATL03 file
+Calculate apparent deadtimes for the two channels in each receiver pixel from an ATL03 file
 
 This script reads and ATL03 file, and uses the inter-photon arrival times to deduce
 the difference between the timing biases for the two channels in each detector pixel.
