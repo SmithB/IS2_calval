@@ -18,12 +18,13 @@ Input (one argument):  A glob string or filename to define the input ATL03 files
 Output (one per channel per file): a list of numbers:
     Channel # for first channel in the pixel
     number of delta-t values in the pixel
-    fraction of all photons in the pixel
     number of greater-lesser deltas in the pixel
     number of lesser-greater deltas in the pixel
     deadtime from greater-lesser differneces
     deadtime from lesser-greater differences
 
+    note that outputs are sorted by beam, then by channel, so channels are not
+    consecutive in the output
 
 Created on Sun Oct 14 19:33:45 2018
 
@@ -123,7 +124,7 @@ for thefile in files:
                 counts, bins=np.histogram(delta_t[delta_ch>0], t_hist)                                                          
                 dt_est_plus[channel]=deadtime_from_hist(bin_ctrs, counts, 0.5, 0.75e-9)  
                 N_minus=np.sum(counts)
-                # output : Channel #, number of delta-t values, fraction of photons in this pixel, number of greater-lesser deltas, number of lesser-greater deltas, deadtime from greater-lesser, deadtime from lesser-greater
-                print("%d\t%d\t%3.3f\t%d\t%d\t%3.2f\t%3.2f" % (channel, delta_t.size, Dch['h_ph'].size/np.float(D['h_ph'].size)*n_px, N_minus, N_plus, dt_est_minus[channel]*1.e9, dt_est_plus[channel]*1.e9))
+                # output : Channel #, number of delta-t values, number of greater-lesser deltas, number of lesser-greater deltas, deadtime from greater-lesser, deadtime from lesser-greater
+                print("%d\t%d\t%3.3f\t%d\t%d\t%3.2f\t%3.2f" % (channel, delta_t.size, N_minus, N_plus, dt_est_minus[channel]*1.e9, dt_est_plus[channel]*1.e9))
  
     
