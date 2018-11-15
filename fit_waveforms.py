@@ -9,6 +9,18 @@ import scipy.sparse as sps
 import matplotlib.pyplot as plt
 DOPLOT=True
 
+class ldict(dict):
+    def __setitem__(self, key, value):
+        if isinstance(key, list):
+            dict.__setitem__(self, tuple(key), value)
+        else:
+            dict.__setitem__(self, key, value)
+    def __getitem__(self, key):
+        if isinstance(key, list):
+            return dict.__getitem__(self, tuple(key))
+        else:
+            return dict.__getitem__(self, key)
+
 def regular_grid_interp_mtx(x0, xi, delta=None):
     # fast linear interpolation matrix script, creates a sparse matrix that, when dotted with a vector of nodal values, returns the interpolated values at the specified data points
     if delta is None:
@@ -55,44 +67,61 @@ def fit_shifted(delta_t, sigma, D0, D1, M, key_in, key_top):
     M[tuple(key_in)]['best']={'key':tuple(this_key),'R':R[iR[0]]}
     this_key=key_in+[delta_t[iR[1]]]
     M[tuple(key_in)]['second_best']={'key':tuple(this_key),'R':R[iR[1]]}
-    return 
+    return R[iR[0]]
 
-def fit_broadened(sigmas, delta_t, D0, D1, M, key_in, key_top):     
+def fit_broadened(sigmas, delta_ts, D0, D1, M, key_in, key_top):     
     R=np.zeros_like(sigmas)
     for ii, sigma in enumerate(sigmas):         
         this_key=key_in+[sigma]
         if tuple(this_key) in M:
-            R[ii]=M[this_key]
+            R[ii]=M[tuple(this_key)]
             continue
-        if tuple(this_key) not in D0:
-            # if we haven't already broadened the WF to sigma, try it now:
-            dt=D0.t[1]-D0.t[0]
-            nK=3*np.ceil(sigma/dt)
-            tK=np.arange(-nK, nK+1)*dt
-            K=gaussian(tK, 0, sigma)
-            D0[tuple(this_key)]={'t':D0[key_top]['t'], 'p':D0[key_in]['interp_mtx'].dot(np.convolve(D0[key_top]['p'], K,'same'))}         
-        
+        else:
+            if tuple(this_key) not in D0:
+                # if we haven't already broadened the WF to sigma, try it now:
+                dt=np.diff(D0[tuple(key_top)]['t'][0:2])
+                nK=3*np.ceil(sigma/dt)
+                tK=np.arange(-nK, nK+1)*dt
+                K=gaussian(tK, 0, sigma)
+                D0[tuple(this_key)]={'t':D0[key_top]['t'], 'p':np.convolve(D0[key_top]['p'], K,'same')}         
+            R=fit_shifted(delta_ts, sigma, D0, D1, M, key_in+sigma, key_top)
+            R[ii]=M[tuple(key_in+sigma)]['best']['R']
         if ii>0 and R[ii]>R[ii-1]:
             break
     iR=np.argsort(R[0:ii])
     this_key=key_in+[sigmas[iR[0]]]
     M[tuple(key_in)]['best']={'key':tuple(this_key),'R':R[iR[0]]}
-    this_key=key_in+[delta_t[iR[1]]]
+    this_key=key_in+[delta_ts[iR[1]]]
     M[tuple(key_in)]['second_best']={'key':tuple(this_key),'R':R[iR[1]]}
-    return 
+    return R[iR[0]]
     
     
 def fit_library(D1s, D0s, sigmas, delta_ts):
+    """
+    Search a library of waveforms for the best match between the broadened, shifted library waveform
+    and the target waveforms
+    
+    """
     D0=dict()
-    for D1 in D1s:
+    # loop over input waveforms
+    for D1 in D1s:        
+        # set up a matching dictionary (contains keys of waveforms and their misfits)
         M=dict()
-        for kk in list(D0s):
+        # loop over the library of templates
+        keys=list(D0s)
+        R=np.zeros(len(keys))
+        for ii, kk in enumerate(keys):
+            # check if we've searched this template before, otherwise copy it into
+            # the library of checked templates
             if kk not in D0:
-                D0[kk]=D0s[kk].copy()
-            fit_broadened(sigmas, delta_ts, D0, D1, M, kk, kk)
+                D0[tuple([kk])]=D0s[kk].copy()
+            # find the best misfit between this template and the waveform
+            R[ii]=fit_broadened(sigmas, delta_ts, D0, D1, M, [kk], [kk])
+        # recursively search the M dict for the best match
         best_model=M
         while 'best' in best_model:
             best_model=best_model['best']
+        # write out the best model information to the input waveform
         D1.update(best_model)
     return 
     
@@ -104,7 +133,7 @@ def test():
     p[t<5]=0
     p=np.convolve(p, K, 'same')
     D1s=list({'t':t, 'p':p+.25})
-    D0s={[1]:{'t':tg,'p':gaussian(tg, 0, 1)}, [2]:{'t':tg,'p':gaussian(tg,0, 2)}}
+    D0s={(1):{'t':tg,'p':gaussian(tg, 0, 1)}, (2):{'t':tg,'p':gaussian(tg,0, 2)}}
     delta_ts=np.arange(-6, 6, 0.25)
     sigmas=np.arange(0, 4, 0.25)
     fit_library(D1s, D0s, sigmas, delta_ts)
