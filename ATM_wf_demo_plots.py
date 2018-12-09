@@ -11,7 +11,7 @@ import numpy as np
 #matplotlib.use('nbagg')
 import matplotlib.pyplot as plt
 from read_ATM_wfs import read_ATM_file, est_mean_wf, normalize_wf
-from fit_waveforms import fit_library
+from fit_waveforms import fit_library, nSigmaMean, shift_vector
 
 fname='/data/ATM_WF/ramp_passes/2017.12.04/ILNSAW1B_20171204_172637.atm6BT7.caltableApplied.h5'
 
@@ -22,7 +22,7 @@ except:
     D['TXn']=np.zeros_like(D['TX'], dtype=np.float64)
     for col in range(D['TX'].shape[1]):
         D['TXn'][:,col]=normalize_wf(D['TX'][:,col])
-if True:
+if False:
     plt.figure()
     plt.imshow(D['TX'], aspect='auto')
     plt.title('transmit waveform')
@@ -35,7 +35,7 @@ if False:
     plt.title('power afn azimuth')
 
 TXm, tx_sigma=est_mean_wf(D['TX'])
-if True:
+if False:
     plt.figure()
     plt.plot(TXm,'k')
     plt.plot(TXm-tx_sigma,'r--')
@@ -46,20 +46,37 @@ for col in range(D['TX'].shape[1]):
     wf_norm=normalize_wf(D['TX'][:,col])
     misfit[col]=np.sum((wf_norm-TXm)**2)
 
-if False:
-    plt.plot(normalize_wf(D['TX'][:,0]),'g')
+# calculate the mean of the WFs most similar to the mean
+TXm, tx_sigma=est_mean_wf(D['TX'][:, misfit<0.1])
+t0=np.arange(D['TX'].shape[0])*D['dt']
+txCtr, txSigma=nSigmaMean({'t':t0, 'p':TXm})
 
 if False:
-    WF_library={'avg':{'t':np.arange(TXm.size),'p':TXm}}
-    deltas=np.arange(-2, 2.1, 0.1)
+    plt.plot(t0, TXm); plt.plot(t0-5.05625, shift_vector(t0-5.05625, t0, TXm))
+    vv=shift_vector(t0-5.05625, t0, TXm)
+    vi=np.interp(t0-5.05625, t0, TXm)
+    plt.figure()
+    plt.plot(t0, vv-vi)
+
+if True:
+    WF_library={'avg':{'t':t0-txCtr,'p':TXm}}
+    deltas=np.arange(-5, 6, 0.5)
     sigmas=np.arange(0, 5, 0.25)
     D1s=list()
-    for ind in [0, 1, 30]:
-        temp=D['TX'][:,ind].astype(np.float64)
+    for ind in range(1000):
+        temp=D['RX'][:,ind].astype(np.float64)
         temp[temp==255]=np.NaN
-        D1s.append({'t':np.arange(temp.size),'p':temp})
-    fit_library(D1s, WF_library, sigmas, deltas)
-            
+        D1s.append({'t_start':txCtr-t0[0], 't_samp':D['dt'],'p':temp})
+    wfP=fit_library(D1s, WF_library, sigmas, deltas, return_data_est=False)
+    plt.figure(); 
+    plt.subplot(311)
+    plt.plot([ii['A'] for ii in wfP],'.')
+    plt.subplot(312)
+    plt.plot([ii['R']/ii['A'] for ii in wfP],'.')
+    plt.subplot(313)
+    plt.plot([ii['sigma'] for ii in wfP],'.')
+    
+        
 
 #plt.figure()
 #plt.plot(misfit)
