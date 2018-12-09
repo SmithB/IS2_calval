@@ -19,7 +19,7 @@ import h5py
 import os
 from ATL11.pt_blockmedian import pt_blockmedian
 from ATL11.ATL06_data import ATL06_data
-from IS2_calval.Qfit_data import Qfit_data
+from IS2_calval.qfit_data import Qfit_data
 
 import matplotlib.pyplot as plt
 DOPLOT=False
