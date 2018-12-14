@@ -155,8 +155,7 @@ def fit_catalog(WFs, catalog_in, sigmas, delta_ts, return_data_est=False):
     
     Inputs:
         WFs: a list of waveforms.  Each waveform is a dict with entries:
-            't0': the waveform's starting time
-            't_samp': the waveform's sampling interval
+            't': the waveform's time vector
             'p': the power samples of the waveform
         catalog_in: A dictionary containing template that will be broadened and
                     shifted to match the waveforms in 'WFs'.  Each must have entries:
