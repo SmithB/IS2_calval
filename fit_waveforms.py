@@ -5,23 +5,9 @@ Created on Mon Nov  5 16:56:31 2018
 @author: ben
 """
 import numpy as np
-import scipy.sparse as sps
 import matplotlib.pyplot as plt
 import bisect
 DOPLOT=False
-
-class waveform():
-    def __init__(self,p, t0, dt):
-        self.p=p
-        self.t0=t0
-        self.dt=dt
-        self.t=None
-        self.size=self.p.size
-        self.shape=self.p.size
-    def get_t(self):
-        if self.t is None:
-            self.t=self.t0+np.arange(self.p.size)*self.dt
-        return self
 
 
 class listDict(dict):
@@ -44,98 +30,6 @@ class listDict(dict):
             return dict.__contains__(self, tuple(key))
         else:
             return dict.__contains__(self, key)
-
-def wf_centroid(WF, els=None):
-    """
-    Calculate the centroid of a distribution, optionally for the subset specified by "els"
-    """
-    if els is None:
-        els=np.ones_like(WF['p'], dtype=bool)
-    return np.sum(WF['t'][els]*WF['p'][els])/WF['p'][els].sum()
-
-def wf_sigma(WF, els=None, C=None):
-    """
-    Calculate the standard deviation of the energy in a distribution,  optionally for the subset specified by "els"
-    """
-    if els is None:
-        els=np.ones_like(WF['t'], dtype=bool)
-    if C is None:
-        C=wf_centroid(WF, els)
-    return np.sqrt(np.sum(((WF['t'][els]-C)**2)*WF['p'][els])/WF['p'][els].sum())
-
-def wf_percentile(WF, P, els=None):
-    """
-    Calculate the specified percentiles of a distribution,  optionally for the subset specified by "els"
-    """
-    if els is not None:
-        C=np.cumsum(WF['p'][els])
-        return np.interp(P, C/C[-1], WF['t'][els]) 
-    else:
-        C=np.cumsum(WF['p'])
-        return np.interp(P, C/C[-1], WF['t']) 
-
-def wf_robust_spread(WF, els=None):
-    """
-    Calculate half the difference bewteen the 16th and 84th percentiles of a distribution
-    """
-    lowHigh=wf_percentile(WF, np.array([0.16, 0.84]), els=els)
-    return (lowHigh[1]-lowHigh[0])/2.
-    
-def nSigmaMean(WF, N=3, els=None, tol=None, maxCount=20):
-    """
-        Calculate the iterative N-sigma edit, using the robust spread to measure sigma
-    """
-    if tol is None:
-        tol=0.1*(WF['t'][1]-WF['t'][0])
-    if els is None:
-        els=WF['p']>0
-    else:
-        els = els & (WF['p'] > 0)
-    t_last=WF['t'][0]
-    tc=wf_centroid(WF, els)  
-    sigma=wf_robust_spread(WF, els)
-    count=0
-    while (np.abs(t_last-tc) > tol) and (count<maxCount):
-        count+=1
-        these=(WF['p'] > 0) & (np.abs(WF['t']-tc) < N*sigma)
-        t_last=tc;
-        tc=wf_centroid(WF, els=these)
-        sigma=wf_robust_spread(WF, els=these)
-    return tc, sigma
-    
-
-def regular_grid_interp_mtx(x0, xi, delta=None):
-    """
-    Fast linear interpolation matrix script, creates a sparse matrix that, when dotted with a vector of nodal values, returns the interpolated values at the specified data points
-    """
-    if delta is None:
-        delta=x0[1]-x0[0]
-    inBds=np.where((xi >= x0[0]) & (xi < x0[-1]))[0]
-    ii=(xi[inBds]-x0[0])/delta
-    di=ii-np.floor(ii)   
-    M=sps.coo_matrix((np.c_[1-di, di].ravel(), \
-                      (np.c_[inBds, inBds].ravel(), np.c_[np.floor(ii), np.floor(ii)+1].ravel().astype(int))), shape=(xi.size, x0.size)).tocsr()
-    return M, inBds
-
-#def shift_vector(WF0, WF1, delta=0, report_inBds=False):
-#    
-#    
-#    ys=np.zeros_like(WF0['p'])
-#    x0=WF0['t0']+WF0['t_samp']*np.arange(WF0['p'].size)
-#    x1=delta_t+WF1['t0']+WF1['t_samp']*np.arange(WF1['p'].size)
-#    inBds_i=np.where((xi >= x0[0]) & (xi < x0[-1]))[0]
-#    ni=inBds_i.size
-#    try:
-#        delta_ind=(xi[inBds_i[0]]-x0[0])/delta
-#    except IndexError:
-#        print("here!")
-#    W=(delta_ind-np.floor(delta_ind))
-#    i0=int(np.floor(delta_ind))
-#    ys[inBds_i]=(1-W)*y0[i0:i0+ni]+W*y0[i0+1:i0+ni+1]
-#    if report_inBds:
-#        return ys, inBds_i
-#    else:
-#        return ys
 
 def gaussian(x, ctr, sigma):
     """
@@ -328,21 +222,4 @@ def fit_catalog(WFs, catalog_in, sigmas, delta_ts, return_data_est=False):
             plt.title('K=%f, dt=%f, sigma=%f, R=%f' % (this_key[0], fit_params[WF_count]['dt'], fit_params[WF_count]['sigma'], fit_params[WF_count]['R']))
             print(WF_count)
     return fit_params
-    
-def test():
-    t=np.arange(0, 10, 0.01)
-    tg=np.arange(-15., 15.)
-    K=gaussian(tg, 0, 3)
-    p=np.exp(-(t-5)/.25)
-    p[t<5]=0
-    p=np.convolve(p, K, 'same')
-    D1s=list({'t':t, 'p':p+.25})
-    D0s={(1):{'t':tg,'p':gaussian(tg, 0, 1)}, (2):{'t':tg,'p':gaussian(tg,0, 2)}}
-    delta_ts=np.arange(-6, 6, 0.25)
-    sigmas=np.arange(0, 4, 0.25)
-    fit_library(D1s, D0s, sigmas, delta_ts)
  
-    print(D1s)
-if __name__=="__main__":
-    test()
-    
