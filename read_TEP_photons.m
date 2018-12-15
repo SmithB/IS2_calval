@@ -47,15 +47,17 @@ for kB=1:2
         offset_val(els)=t_offset(kC);
         channel_biases(uC(kC))=t_offset(kC);
         if DOPLOT
-            plot(bin_x-this_ctr, histcounts(Dp(kB).tof_tep(els), hist_bins));
+            hl0=plot((bin_x-this_ctr)*1e9, histcounts(Dp(kB).tof_tep(els), hist_bins),'color', [0.7 0.7 0.7]);
         end
     end
     
     if DOPLOT
+         
         nn=histcounts(Dp(kB).tof_tep, hist_bins);
-        plot(bin_x-mean(t_offset), nn/nC,'k','linewidth', 2);
+        hl1=plot((bin_x-mean(t_offset))*1e9, nn/nC,'r','linewidth', 2);
         nn=histcounts(Dp(kB).tof_tep-offset_val, hist_bins-mean(t_offset));
-        plot(bin_x-mean(t_offset), nn/nC,'r','linewidth', 3);
+        hl2=plot((bin_x-mean(t_offset))*1e9, nn/nC,'k','linewidth', 3);
+        legend([hl0, hl1, hl2],{'channels','mean raw','mean corrected'})
     end
     N_tot(kB)=length(Dp(kB).tof_tep);
 end
