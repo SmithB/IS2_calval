@@ -73,7 +73,7 @@ def wf_misfit(delta_t, sigma, WF, catalog, M, key_top,  G=None, return_data_est=
         return M[this_key]['R']     
     else:
         # check if the broadened but unshifted version of this key is in the catalog
-        broadened_key=key_top+[sigma]+[0]
+        broadened_key=key_top+[sigma]
         if broadened_key in catalog:
             broadened_wf=catalog[broadened_key].p
         else:
@@ -84,15 +84,16 @@ def wf_misfit(delta_t, sigma, WF, catalog, M, key_top,  G=None, return_data_est=
                 nK=3*np.ceil(sigma/WF.dt)
                 tK=np.arange(-nK, nK+1)*WF.dt
                 K=gaussian(tK, 0, sigma)
-                broadened_wf=np.convolve(catalog[key_top].p, K,'same')
+                broadened_wf=np.convolve(catalog[key_top].p.ravel(), K,'same')
             catalog[broadened_key]=waveform(catalog[key_top].t, broadened_wf, t0=catalog[key_top].t0, tc=catalog[key_top].tc)
         if this_key not in catalog:
             M[this_key]=listDict()
-            catalog[this_key]=catalog[broadened_key].copy()          
-            catalog[this_key].p=np.interp(WF.t-WF.tc, catalog[key_top].t-catalog[key_top].tc+delta_t, broadened_wf)
+            catalog[this_key] = waveform(catalog[broadened_key].t, \
+                   np.interp(WF.t.ravel(), (catalog[key_top].t-catalog[key_top].tc+delta_t).ravel(), broadened_wf.ravel(), left=np.NaN, right=np.NaN), \
+                   tc=catalog[broadened_key].tc, t0=catalog[broadened_key].t0)
             
         R, m = lin_fit_misfit(catalog[this_key].p, WF.p, G=G)
-        M[this_key] = {'K0':key_top, 'R':R, 'A':m[0], 'B':m[1], 'dt':delta_t, 'sigma':sigma}  
+        M[this_key] = {'K0':key_top, 'R':R, 'A':m[0], 'B':m[1], 'delta_t':delta_t, 'sigma':sigma}  
         
         if return_data_est:
             return R, G.dot(m)
@@ -141,12 +142,12 @@ def broadened_misfit(delta_ts, sigma, WF, catalog, M, key_top,  t_tol=None):
         if this_key not in catalog:
             # if we haven't already broadened the WF to sigma, try it now:
             if sigma==0:
-                catalog[this_key]={'t':catalog[key_top].t, 'p':catalog[key_top].p}
+                catalog[this_key]=waveform(catalog[key_top].t, catalog[key_top].p, t0=catalog[key_top].t0, tc=catalog[key_top].tc)
             else:    
                 nK=3*np.ceil(sigma/WF.dt)
                 tK=np.arange(-nK, nK+1)*WF.dt
                 K=gaussian(tK, 0, sigma)
-                catalog[this_key]=waveform(catalog[key_top].t, np.convolve(catalog[key_top].p, K,'same'))         
+                catalog[this_key]=waveform(catalog[key_top].t, np.convolve(catalog[key_top].p.ravel(), K,'same'))         
         return fit_shifted(delta_ts, sigma, catalog, WF,  M, key_top, t_tol=t_tol) 
  
 def fit_broadened(  delta_ts, sigmas, catalog, WF,  M, key_top,  t_tol=None): 
@@ -191,14 +192,19 @@ def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=F
             k0: the key into the waveform catalog for the best-fitting waveform
     
     """
+    # set a sensible tolerance for delta_t if none is specified
     if t_tol is None:
-        t_tol=WFs['dt']*0.1
+        t_tol=WFs.dt*0.1
+        
+    # calculate the spacing in the delta_t values
+    delta_t_step=delta_ts[1]-delta_ts[0]
+    
     # make an empty container where we will keep waveforms we've tried already
     catalog=listDict()
-    keys=list(catalog_in)
+    keys=np.sort(list(catalog_in))
     fit_params=[None for ii in range(WFs.size)]
     # loop over input waveforms
-    for WF_count, WF in range(WFs.size):
+    for WF_count in range(WFs.size):
         WF=WFs[WF_count]
         # set up a matching dictionary (contains keys of waveforms and their misfits)
         M=listDict()
@@ -207,12 +213,20 @@ def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=F
         for ii, kk in enumerate(keys):
             # check if we've searched this template before, otherwise copy it into
             # the library of checked templates
-            if kk not in catalog:
-                catalog[[kk]]=catalog_in[kk].copy()
-            if kk not in M:
+            if [kk] not in catalog:
+                # make a copy of the current template
+                temp=catalog_in[kk]
+                catalog[[kk]]=waveform(temp.t, temp.p, t0=temp.t0, tc=temp.tc)
+            if [kk] not in M:
                 M[[kk]]=listDict()
             # find the best misfit between this template and the waveform
-            R[ii]=fit_broadened(delta_ts, sigmas, catalog, WF, M, [kk], t_tol=t_tol)
+            R[ii]=fit_broadened(delta_ts+np.round(WF.tc/delta_t_step)*delta_t_step, sigmas, catalog, WF, M, [kk], t_tol=t_tol)
+            if len(keys) > 1:
+                if ii > 3:
+                    iR=np.argsort(R[0:ii+1])
+                    if np.any(R[iR] > R[iR][0]*(1+2/np.sqrt(WF.t.size))) and iR[0] < ii:
+                        break
+        R=R[0:ii+1]
         iR=np.argsort(R)
         this_key=[keys[iR[0]]]
         M['best']={'key':this_key, 'R':R[iR[0]]}
@@ -222,16 +236,25 @@ def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=F
             this_key=M[this_key]['best']['key']
         # write out the best model information 
         fit_params[WF_count]=M[this_key]
+        if len(keys) > 1:
+            # find the range of K0 vals whose residuals are not significantly different from the optimum
+            R_max=fit_params[WF_count]['R']*(1.+1./np.sqrt(WF.t.size))
+            kVals=keys[np.where(R<=R_max)[0]]
+            fit_params[WF_count]['Kmin']=kVals.min()
+            fit_params[WF_count]['Kmax']=kVals.max()
         #print(this_key+[R[iR][0]])
         if return_data_est or DOPLOT:
             #             wf_misfit(delta_t, sigma, WF, catalog, M, key_top, G=None, return_data_est=False):
-            R0, wf_est=wf_misfit(fit_params[WF_count]['dt'], fit_params[WF_count]['sigma'], WF, catalog, M, [this_key[0]], return_data_est=True)
+            R0, wf_est=wf_misfit(fit_params[WF_count]['delta_t'], fit_params[WF_count]['sigma'], WF, catalog, M, [this_key[0]], return_data_est=True)
             fit_params[WF_count]['wf_est']=wf_est
         if DOPLOT:
             plt.figure(); 
             plt.plot(WF.t,WF.p,'k.')
             plt.plot(WF.t, wf_est,'r')
-            plt.title('K=%f, dt=%f, sigma=%f, R=%f' % (this_key[0], fit_params[WF_count]['dt'], fit_params[WF_count]['sigma'], fit_params[WF_count]['R']))
+            plt.title('K=%f, dt=%f, sigma=%f, R=%f' % (this_key[0], fit_params[WF_count]['delta_t'], fit_params[WF_count]['sigma'], fit_params[WF_count]['R']))
             print(WF_count)
+        if np.mod(WF_count, 20)==0:
+            print('    N=%d, N_keys=%d' % (WF_count, len(list(catalog))))
+            
     return fit_params
  
