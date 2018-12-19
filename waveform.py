@@ -6,39 +6,52 @@ Created on Fri Dec 14 09:06:47 2018
 @author: ben
 """
 import numpy as np
- 
+import copy
 
 class waveform(object):
-    __slots__=['p','t','t0','dt', 'tc']
-    def __init__(self,p, t, t0=None, tc=None):
-        if t0 is not None:
-            if t0.size < self.p.size[1]:
-                self.t0=np.zeros(self.p.size[1])+t0
-            else:
-                self.t0=t0
-        if tc is not None:
-            if tc.size < self.p.size[1]:
-                self.tc=np.zeros(self.p.size[1])+tc
-            else:
-                self.tc=tc
+    __slots__=['p','t','t0', 'dt', 'tc', 'size', 'nSamps']
+    def __init__(self, t, p, t0=None, tc=None):
+        
         self.t=t
+        self.t.shape=[t.size,1]
         self.dt=t[1]-t[0]
         self.p=p
         if p.ndim == 1:
             self.p.shape=[p.size,1]
         self.size=self.p.shape[1]
-        self.nSamps=self.p.size[0]
-    
-    def  __getitem__(self, key):
-        return waveform(self.p[:,key], self.t, t0=self.t0[key])
+        self.nSamps=self.p.shape[0]
         
-    def centroid(self, els=None):
+        if t0 is not None:
+            if ~hasattr(t0,'__len__') or t0.size < self.size:
+                self.t0=np.zeros(self.size)+t0
+            else:
+                self.t0=t0
+        else:
+            self.t0=np.zeros(self.size)
+            
+        if tc is not None:
+            if ~hasattr(tc,'__len__') or tc.size < self.size:
+                self.tc=np.zeros(self.size)+tc
+            else:
+                self.tc=tc
+        else:
+            self.tc=np.zeros(self.size)
+    
+    def __getitem__(self, key):
+        return waveform(self.t, self.p[:,key], t0=self.t0[key], tc=self.tc[key])
+            
+    def centroid(self, els=None, threshold=None):
         """
         Calculate the centroid of a distribution, optionally for the subset specified by "els"
         """
-        if els is None:
-            els=np.ones_like(self.p, dtype=bool)
-        return np.sum(self.t[els]*self.p[els])/self.p[els].sum()
+        if els is not None: 
+            return np.sum(self.t[els]*self.p[els])/self.p[els].sum()
+        if threshold is not None:
+            p=self.p.copy()
+            p[p<threshold]=0
+            p[~np.isfinite(p)]=0
+            return np.sum(self.t*p, axis=0)/np.sum(self.p, axis=0)
+        return  np.sum(self.t*self.p, axis=0)/np.sum(self.p, axis=0)
 
     def sigma(self, els=None, C=None):
         """
