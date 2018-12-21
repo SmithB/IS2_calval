@@ -32,6 +32,19 @@ class listDict(dict):
         else:
             return dict.__contains__(self, key)
 
+def integer_shift(p, delta, fill_value=np.NaN):
+    result = np.empty_like(p)
+    delta=np.int(delta)
+    if delta > 0:
+        result[:delta] = fill_value
+        result[delta:] = p[:-delta]
+    elif delta < 0:
+        result[delta:] = fill_value
+        result[:delta] = p[-delta:]
+    else:
+        result[:] = p
+    return result
+
 def gaussian(x, ctr, sigma):
     """
         return a normalized gaussian kernel centered on 'ctr' with width 'sigma'
@@ -93,7 +106,7 @@ def wf_misfit(delta_t, sigma, WF, catalog, M, key_top,  G=None, return_data_est=
                    tc=catalog[broadened_key].tc, t0=catalog[broadened_key].t0)
             
         R, m = lin_fit_misfit(catalog[this_key].p, WF.p, G=G)
-        M[this_key] = {'K0':key_top, 'R':R, 'A':m[0], 'B':m[1], 'delta_t':delta_t, 'sigma':sigma}  
+        M[this_key] = {'K0':key_top[0], 'R':R, 'A':m[0], 'B':m[1], 'delta_t':delta_t, 'sigma':sigma}  
         
         if return_data_est:
             return R, G.dot(m)
@@ -164,7 +177,7 @@ def fit_broadened(  delta_ts, sigmas, catalog, WF,  M, key_top,  t_tol=None):
     M[key_top]['best']={'key':this_key,'R':R[iR]}
     return R[iR]
     
-def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=False):
+def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=False, return_catalog=False, catalog=None):
     """
     Search a library of waveforms for the best match between the broadened, shifted library waveform
     and the target waveforms
@@ -195,17 +208,29 @@ def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=F
     # set a sensible tolerance for delta_t if none is specified
     if t_tol is None:
         t_tol=WFs.dt*0.1
-        
-    # calculate the spacing in the delta_t values
-    delta_t_step=delta_ts[1]-delta_ts[0]
+    
+    # make an empty output_dictionary
+    WFp_empty={f:np.NaN for f in ['K0','R','A','B','delta_t','sigma','t0','Kmin','Kmax','shot']}
+    if return_data_est:
+        WFp_empty['wf_est']=np.zeros_like(WFs.t)+np.NaN
     
     # make an empty container where we will keep waveforms we've tried already
-    catalog=listDict()
+    if catalog is None:
+        catalog=listDict()
     keys=np.sort(list(catalog_in))
-    fit_params=[None for ii in range(WFs.size)]
+    fit_params=[WFp_empty.copy() for ii in range(WFs.size)]
+    
+    t_center=WFs.t.mean()
     # loop over input waveforms
     for WF_count in range(WFs.size):
         WF=WFs[WF_count]
+        if WF.nPeaks > 1:
+            continue
+        # shift the waveform to put its tc at the center of the time vector
+        delta_samp=np.round((WF.tc-t_center)/WF.dt)
+        WF.p=integer_shift(WF.p, -delta_samp)
+        WF.t0=-delta_samp*WF.dt
+        
         # set up a matching dictionary (contains keys of waveforms and their misfits)
         M=listDict()
         # loop over the library of templates
@@ -220,7 +245,7 @@ def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=F
             if [kk] not in M:
                 M[[kk]]=listDict()
             # find the best misfit between this template and the waveform
-            R[ii]=fit_broadened(delta_ts+np.round(WF.tc/delta_t_step)*delta_t_step, sigmas, catalog, WF, M, [kk], t_tol=t_tol)
+            R[ii]=fit_broadened(delta_ts, sigmas, catalog, WF, M, [kk], t_tol=t_tol)
             if len(keys) > 1:
                 if ii > 3:
                     iR=np.argsort(R[0:ii+1])
@@ -235,7 +260,9 @@ def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=F
         while 'best' in M[this_key]:
             this_key=M[this_key]['best']['key']
         # write out the best model information 
-        fit_params[WF_count]=M[this_key]
+        fit_params[WF_count].update(M[this_key])
+        fit_params[WF_count]['delta_t'] -= WF.t0[0]
+        fit_params[WF_count]['shot'] = WF.shots[0]
         if len(keys) > 1:
             # find the range of K0 vals whose residuals are not significantly different from the optimum
             R_max=fit_params[WF_count]['R']*(1.+1./np.sqrt(WF.t.size))
@@ -245,16 +272,27 @@ def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=F
         #print(this_key+[R[iR][0]])
         if return_data_est or DOPLOT:
             #             wf_misfit(delta_t, sigma, WF, catalog, M, key_top, G=None, return_data_est=False):
+            WF.t=WF.t-WF.t0
             R0, wf_est=wf_misfit(fit_params[WF_count]['delta_t'], fit_params[WF_count]['sigma'], WF, catalog, M, [this_key[0]], return_data_est=True)
-            fit_params[WF_count]['wf_est']=wf_est
+            fit_params[WF_count]['wf_est']=integer_shift(wf_est, delta_samp)
         if DOPLOT:
             plt.figure(); 
-            plt.plot(WF.t,WF.p,'k.')
+            plt.plot(WF.t, integer_shift(WF.p, delta_samp),'k.')
             plt.plot(WF.t, wf_est,'r')
             plt.title('K=%f, dt=%f, sigma=%f, R=%f' % (this_key[0], fit_params[WF_count]['delta_t'], fit_params[WF_count]['sigma'], fit_params[WF_count]['R']))
             print(WF_count)
-        if np.mod(WF_count, 20)==0:
+        if np.mod(WF_count, 500)==0 and WF_count > 0:
             print('    N=%d, N_keys=%d' % (WF_count, len(list(catalog))))
-            
-    return fit_params
+    
+    result=dict()
+    for key in WFp_empty:
+        if key is 'wf_est':
+            result[key]=np.concatenate( [ ii['wf_est'] for ii in fit_params ], axis=1 )
+        else:
+            result[key]=np.array([ii[key] for ii in fit_params]).ravel()
+    
+    if return_catalog:
+        return result, catalog
+    else:
+        return result
  
