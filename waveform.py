@@ -6,11 +6,16 @@ Created on Fri Dec 14 09:06:47 2018
 @author: ben
 """
 import numpy as np
-import copy
+
+def gaussian(x, ctr, sigma):
+    """
+        return a normalized gaussian kernel centered on 'ctr' with width 'sigma'
+    """
+    return 1/(sigma*np.sqrt(2*np.pi))*np.exp(-(x-ctr)**2/2/sigma**2)
 
 class waveform(object):
-    __slots__=['p','t','t0', 'dt', 'tc', 'size', 'nSamps']
-    def __init__(self, t, p, t0=None, tc=None):
+    __slots__=['p','t','t0', 'dt', 'tc', 'size', 'nSamps', 'nPeaks','shots']
+    def __init__(self, t, p, t0=0, tc=0, nPeaks=1, shots=np.NaN):
         
         self.t=t
         self.t.shape=[t.size,1]
@@ -21,24 +26,15 @@ class waveform(object):
         self.size=self.p.shape[1]
         self.nSamps=self.p.shape[0]
         
-        if t0 is not None:
-            if ~hasattr(t0,'__len__') or t0.size < self.size:
-                self.t0=np.zeros(self.size)+t0
+        kw_dict={'t0':t0, 'tc':tc, 'nPeaks':nPeaks,'shots':shots}
+        for key, val in kw_dict.items():
+            if ~hasattr(val,'__len__') or val.size < self.size:
+                setattr(self, key, np.zeros(self.size, dtype=np.array(val).dtype)+val)
             else:
-                self.t0=t0
-        else:
-            self.t0=np.zeros(self.size)
-            
-        if tc is not None:
-            if ~hasattr(tc,'__len__') or tc.size < self.size:
-                self.tc=np.zeros(self.size)+tc
-            else:
-                self.tc=tc
-        else:
-            self.tc=np.zeros(self.size)
+                setattr(self, key, val)
     
     def __getitem__(self, key):
-        return waveform(self.t, self.p[:,key], t0=self.t0[key], tc=self.tc[key])
+        return waveform(self.t, self.p[:,key], t0=self.t0[key], tc=self.tc[key], nPeaks=self.nPeaks[key],shots=self.shots[key])
             
     def centroid(self, els=None, threshold=None):
         """
@@ -81,6 +77,23 @@ class waveform(object):
         lowHigh=self.percentile(np.array([0.16, 0.84]), els=els)
         return (lowHigh[1]-lowHigh[0])/2.
         
+    def count_peaks(self, threshold=0.25, W=3, return_indices=False):
+        K=gaussian(np.arange(-4*W, 4*W+1), 0, W)
+        N=np.zeros(self.size)
+        if return_indices:
+            peak_list=list()
+        for col in range(self.size):
+            pS=np.convolve(self.p[:,col], K,'same')
+            peaks=(pS[1:-1] > pS[0:-2]) & (pS[1:-1] > pS[2:]) & (pS[1:-1] > np.nanmax(pS)*threshold)
+            N[col]=peaks.sum()
+            if return_indices:
+                peak_list.append(np.where(peaks)[0]+1)
+        if return_indices:
+            return N, peak_list
+        else:
+            return N
+            
+    
     def nSigmaMean(self, N=3, els=None, tol=None, maxCount=20):
         """
             Calculate the iterative N-sigma edit, using the robust spread to measure sigma
@@ -102,3 +115,19 @@ class waveform(object):
             tc=self.centroid(els=these)
             sigma=self.robust_spread(els=these)
         return tc, sigma
+
+    def subBG(self, bg_samps=np.arange(0,30, dtype=int)):
+        bgEst=np.nanmean(self.p[bg_samps, :], axis=0)
+        self.p=self.p-bgEst
+        return self
+    
+    def normalize(self):
+        self.subBG()
+        self.p=self.p/np.nanmax(self.p, axis=0)
+        return self
+    
+    def calcMean(self, threshold=255):
+        good=np.sum( (~np.isfinite(self.p)) & (self.p < threshold), axis=0) < 2
+        return waveform(self.t, self[good].normalize().p.sum(axis=1))
+        
+        
