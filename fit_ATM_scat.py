@@ -81,7 +81,7 @@ args=parser.parse_args()
 nWFs=np.minimum(args.nShots, read_ATM_file(args.input_file, getCountAndReturn=True)-args.startShot)
 lastShot=args.startShot+nWFs
 
-# make the output data
+# make the output file
 if os.path.isfile(args.output_file):
     os.remove(args.output_file)
 
@@ -95,11 +95,12 @@ if args.waveforms:
     out_h5.create_dataset('RX/p', (192, nWFs))
     out_h5.create_dataset('RX/p_fit', (192, nWFs))
 
-blocksize=100
+# choose how to divide the output
+blocksize=1000
 start_vals=args.startShot+np.arange(0, nWFs, blocksize, dtype=int)
  
 # get the transmit pulse
-TX = get_tx_est(args.input_file, nShots=500)
+TX = get_tx_est(args.input_file)
 
 # make the library of templates
 WF_library = dict()
@@ -107,12 +108,11 @@ WF_library.update({0.:TX})
 WF_library.update(make_rx_scat_catalog(TX))
 R_vals=np.sort(list(WF_library))
 
+print "Returns:"
 # loop over start vals (one block at a time...)
 catalogBuffer=None
 for shot0 in start_vals:
     D=read_ATM_file(args.input_file, shot0=shot0, nShots=np.minimum(blocksize, lastShot-shot0))
-    
-    print("Returns")
     
     # make the return waveform structure
     rxData=D['RX'][0:D['RX'].size]
