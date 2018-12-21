@@ -108,7 +108,7 @@ WF_library.update({0.:TX})
 WF_library.update(make_rx_scat_catalog(TX))
 R_vals=np.sort(list(WF_library))
 
-print "Returns:"
+print("Returns:")
 # loop over start vals (one block at a time...)
 catalogBuffer=None
 for shot0 in start_vals:
