@@ -14,7 +14,7 @@ def gaussian(x, ctr, sigma):
     return 1/(sigma*np.sqrt(2*np.pi))*np.exp(-(x-ctr)**2/2/sigma**2)
 
 class waveform(object):
-    __slots__=['p','t','t0', 'dt', 'tc', 'size', 'nSamps', 'nPeaks','shots']
+    __slots__=['p','t','t0', 'dt', 'tc', 'size', 'nSamps', 'nPeaks','shots','params']
     def __init__(self, t, p, t0=0, tc=0, nPeaks=1, shots=np.NaN):
         
         self.t=t
@@ -25,6 +25,7 @@ class waveform(object):
             self.p.shape=[p.size,1]
         self.size=self.p.shape[1]
         self.nSamps=self.p.shape[0]
+        self.params=dict()
         
         kw_dict={'t0':t0, 'tc':tc, 'nPeaks':nPeaks,'shots':shots}
         for key, val in kw_dict.items():
@@ -128,6 +129,6 @@ class waveform(object):
     
     def calcMean(self, threshold=255):
         good=np.sum( (~np.isfinite(self.p)) & (self.p < threshold), axis=0) < 2
-        return waveform(self.t, self[good].normalize().p.sum(axis=1))
+        return waveform(self.t, self[good].normalize().p.mean(axis=1))
         
         
