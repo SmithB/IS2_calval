@@ -62,8 +62,11 @@ def read_ATM_file(fname, getCountAndReturn=False, shot0=0, nShots=np.Inf, readTX
             D_in[key]=np.array(h5f[key][shot0:shotN], dtype=int)
             
         #read in the geolocation
-        for key in ('footprint/latitude','footprint/longitude','footprint/elevation','/laser/scan_azimuth'):
-            D_in[key]=np.array(h5f[key][shot0:shotN])
+        try:
+            for key in ('footprint/latitude','footprint/longitude','footprint/elevation','/laser/scan_azimuth'):
+                D_in[key]=np.array(h5f[key][shot0:shotN])
+        except KeyError:
+            pass
         # read the sampling interval
         dt=np.float64(h5f['/waveforms/twv/ancillary_data/sample_interval'])
         
@@ -81,10 +84,11 @@ def read_ATM_file(fname, getCountAndReturn=False, shot0=0, nShots=np.Inf, readTX
         TX=list()
         RX=list()
         tx_samp0=list()
+        rx_samp0=list()
         RX=list()
         nPeaks=list()
         rxBuffer=np.zeros(192)+np.NaN
-        for shot in range(nShots):
+        for shot in range(int(nShots)):
             wfd=read_wf(D_in, shot, starting_sample=sample_start, read_tx=readTX, read_rx=readRX)
             if readTX:
                 TX.append(wfd['tx']['P'][0:160])
@@ -95,8 +99,12 @@ def read_ATM_file(fname, getCountAndReturn=False, shot0=0, nShots=np.Inf, readTX
                 rxBuffer[nRX+1:-1]=np.NaN
                 RX.append(rxBuffer.copy())
                 nPeaks.append(wfd['rx']['count'])
+                rx_samp0.append(wfd['rx']['pos'])
         shots=np.arange(shot0, shotN, dtype=int)
-        result={ 'az':D_in['/laser/scan_azimuth'],'dt':dt, 'elevation':D_in['footprint/elevation'], 'latitude':D_in['footprint/latitude'],'longitude':D_in['footprint/longitude']}
+        try:
+            result={ 'az':D_in['/laser/scan_azimuth'],'dt':dt, 'elevation':D_in['footprint/elevation'], 'latitude':D_in['footprint/latitude'],'longitude':D_in['footprint/longitude']}
+        except KeyError:
+            result={}
         if readTX:
             TX=np.c_[TX].transpose() 
             result['TX']=waveform(np.arange(TX.shape[0])*dt, TX, shots=shots)
