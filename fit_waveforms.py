@@ -5,9 +5,11 @@ Created on Mon Nov  5 16:56:31 2018
 @author: ben
 """
 import numpy as np
+from numpy.linalg import inv
 import matplotlib.pyplot as plt
 import bisect
 from waveform import waveform
+from time import time
 DOPLOT=False
 
 
@@ -51,7 +53,7 @@ def gaussian(x, ctr, sigma):
     """
     return 1/(sigma*np.sqrt(2*np.pi))*np.exp(-(x-ctr)**2/2/sigma**2)
 
-def lin_fit_misfit(x, y, G=None, m=None):
+def lin_fit_misfit(x, y, G=None, m=None, Ginv=None, good_old=None):
     """
     Calculate the best-fitting background + scaled waveform model, return its
     misfit 
@@ -60,20 +62,27 @@ def lin_fit_misfit(x, y, G=None, m=None):
         G=np.ones((x.size, 2))
     G[:,0]=x.ravel()
     good=np.isfinite(G[:,0]) & np.isfinite(y.ravel())
-    # need at least three good values to calculate a misfit
-    if good.sum() < 3:
-        m=np.zeros(2)
-        R=np.sqrt(np.sum(y**2)/(y.size-2))
-        return R, m
-    G1=G[good,:]
-    try:
-        m=np.linalg.solve(G1.transpose().dot(G1), G1.transpose().dot(y[good]))
-        R=np.sqrt(np.sum((y[good]-G1.dot(m))**2.)/(good.sum()-2))
-        #R=np.sqrt(m_all[1][0])
-    except np.linalg.LinAlgError:
-        m=np.zeros(2)
-        R=np.sqrt(np.sum(y**2.)/(y.size-2))
-    return R, m
+    if good_old is not None and Ginv is not None and np.all(good_old==good):
+        # use the previously calculated version of Ginv
+        m=Ginv.dot(y[good])
+        R=R=np.sqrt(np.sum((y[good]-G[good,:].dot(m))**2.)/(good.sum()-2))
+    else:    
+        # need at least three good values to calculate a misfit
+        if good.sum() < 3:
+            m=np.zeros(2)
+            R=np.sqrt(np.sum(y**2)/(y.size-2))
+            return R, m
+        G1=G[good,:]
+        try:
+            #m=np.linalg.solve(G1.transpose().dot(G1), G1.transpose().dot(y[good]))
+            Ginv=np.linalg.solve(G1.transpose().dot(G1), G1.transpose())
+            m=Ginv.dot(y[good])
+            R=np.sqrt(np.sum((y[good]-G1.dot(m))**2.)/(good.sum()-2))
+            #R=np.sqrt(m_all[1][0])
+        except np.linalg.LinAlgError:
+            m=np.zeros(2)
+            R=np.sqrt(np.sum(y**2.)/(y.size-2))
+    return R, m, Ginv, good
 
 def wf_misfit(delta_t, sigma, WF, catalog, M, key_top,  G=None, return_data_est=False):
     """    
@@ -104,9 +113,13 @@ def wf_misfit(delta_t, sigma, WF, catalog, M, key_top,  G=None, return_data_est=
             catalog[this_key] = waveform(catalog[broadened_key].t, \
                    np.interp(WF.t.ravel(), (catalog[key_top].t-catalog[key_top].tc+delta_t).ravel(), broadened_wf.ravel(), left=np.NaN, right=np.NaN), \
                    tc=catalog[broadened_key].tc, t0=catalog[broadened_key].t0)
-            
-        R, m = lin_fit_misfit(catalog[this_key].p, WF.p, G=G)
-        M[this_key] = {'K0':key_top[0], 'R':R, 'A':m[0], 'B':m[1], 'delta_t':delta_t, 'sigma':sigma}  
+            catalog[this_key].params['Ginv']=None
+            catalog[this_key].params['good']=None
+        R, m, Ginv, good = lin_fit_misfit(catalog[this_key].p, WF.p, G=G,\
+            Ginv=catalog[this_key].params['Ginv'], good_old=catalog[this_key].params['good'])
+        catalog[this_key].params['Ginv']=Ginv
+        catalog[this_key].params['good']=good
+        M[this_key] = {'K0':key_top[0], 'R':R, 'A':np.float64(m[0]), 'B':np.float64(m[1]), 'delta_t':delta_t, 'sigma':sigma}  
         
         if return_data_est:
             return R, G.dot(m)
@@ -122,10 +135,14 @@ def fit_shifted(delta_t_list, sigma, catalog, WF, M, key_top,  t_tol=None):
 
     if t_tol is None:
         t_tol=WF['t_samp']/10.
-
+        
+    delta_t_spacing=delta_t_list[1]-delta_t_list[0]
+    
     # first search the (coarse) input values of delta_t.  We will refine based on the best of these
     delta_t=delta_t_list.copy()
     delta_t_searched=list()
+    shift_count=0  
+    max_shift=100
     # search over delta_t
     while (len(delta_t_searched)==0) or  (np.diff(np.array(delta_t_searched)).min() > t_tol) :       
         for deltaTval in delta_t:
@@ -133,15 +150,31 @@ def fit_shifted(delta_t_list, sigma, catalog, WF, M, key_top,  t_tol=None):
             bisect.insort(delta_t_searched, deltaTval)
         # make a list of R_vals searched
         R_vals=np.array([R_dict[deltaTval] for deltaTval in delta_t_searched])
-        # sort the R_vals
-        iR=np.argsort(R_vals)
-        # The next search value is the golden-section-rule value (0.62 of the 
-        #way between the times for the best and second best residuals)
-        delta_t=[((0.62*delta_t_searched[iR[0]]+0.38*delta_t_searched[iR[1]]))]
- 
-    this_key=key_top+[sigma]+[delta_t_searched[iR[0]]]
-    M[key_top+[sigma]]['best']={'key':this_key,'R':R_vals[iR[0]]}
-    return R_vals[iR[0]]
+        # find the minimum of the R vals
+        iR=np.argmin(R_vals)
+        # choose the next search point.  If the searched picked the minimum or maximum of the
+        # time offsets, take a step  of delta_t_spacing to the left or right
+        if iR==0:
+            delta_t = delta_t_searched[0] - delta_t_spacing
+        elif iR==len(delta_t_searched)-1:
+            delta_t = delta_t_searched[-1] + delta_t_spacing
+        else:
+            # if the minimum was in the interior, find the largest gap in the delta_t values
+            # around the minimum, and add a point using a golden-rule search
+            if delta_t_searched[iR+1]-delta_t_searched[iR] > delta_t_searched[iR]-delta_t_searched[iR-1]:
+                # the gap to the right of the minimum is largest: put the new point there
+                delta_t = 0.62*delta_t_searched[iR] + 0.38*delta_t_searched[iR+1]
+            else:
+                # the gap to the left of the minimum is largest: put the new point there
+                delta_t = 0.62*delta_t_searched[iR] + 0.38*delta_t_searched[iR-1]
+        # need to make delta_t a list so that it is iterable
+        delta_t=[delta_t]
+        shift_count+=1
+        if shift_count > max_shift:
+            print("WARNING: too many shifts for %d" % catalog[key_top].shot)
+    this_key=key_top+[sigma]+[delta_t_searched[iR]]
+    M[key_top+[sigma]]['best']={'key':this_key,'R':R_vals[iR]}
+    return R_vals[iR]
 
 def broadened_misfit(delta_ts, sigma, WF, catalog, M, key_top,  t_tol=None):
     """
@@ -273,15 +306,15 @@ def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=F
         if return_data_est or DOPLOT:
             #             wf_misfit(delta_t, sigma, WF, catalog, M, key_top, G=None, return_data_est=False):
             WF.t=WF.t-WF.t0
-            R0, wf_est=wf_misfit(fit_params[WF_count]['delta_t'], fit_params[WF_count]['sigma'], WF, catalog, M, [this_key[0]], return_data_est=True)
-            fit_params[WF_count]['wf_est']=integer_shift(wf_est, delta_samp)
+            R0, wf_est=wf_misfit(fit_params[WF_count]['delta_t'], fit_params[WF_count]['sigma'], WFs[WF_count], catalog, M, [this_key[0]], return_data_est=True)
+            fit_params[WF_count]['wf_est']=wf_est#integer_shift(wf_est, -delta_samp)
         if DOPLOT:
             plt.figure(); 
             plt.plot(WF.t, integer_shift(WF.p, delta_samp),'k.')
             plt.plot(WF.t, wf_est,'r')
             plt.title('K=%f, dt=%f, sigma=%f, R=%f' % (this_key[0], fit_params[WF_count]['delta_t'], fit_params[WF_count]['sigma'], fit_params[WF_count]['R']))
             print(WF_count)
-        if np.mod(WF_count, 500)==0 and WF_count > 0:
+        if np.mod(WF_count, 1000)==0 and WF_count > 0:
             print('    N=%d, N_keys=%d' % (WF_count, len(list(catalog))))
     
     result=dict()
