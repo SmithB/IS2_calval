@@ -10,6 +10,10 @@ from read_DEM import read_DEM
 import matplotlib.pyplot as plt
 import osgeo
 import scipy.interpolate as sI
+import argparse
+import h5py
+import sys
+from glob import glob
 
 def validate_xi(xy, xy0):
     # identify points that are inside an interpolation grid
@@ -38,8 +42,8 @@ def evaluate_shift(dxy, basis_vectors, Dsub, gI, inATC=False, return_shifted=Fal
     if inATC:
         # Solve for the residual slope in the along-track direction
         G=np.c_[np.ones(ii.sum), \
-                (Dsub['y'][ii]-Dsub['y'][ii].mean())*basis_vectors[0][1] + \
-                (Dsub['x'][ii]-Dsub['x'][ii].mean())*basis_vectors[0][0]]
+                (Dsub['y'][ii]-Dsub['y'][ii].mean())*basis_vectors[0][1]/1000. + \
+                (Dsub['x'][ii]-Dsub['x'][ii].mean())*basis_vectors[0][0]/1000.]
         # degrees of freedom are Ndata minus two for the fit, one for dx and one for dy
         nDF=G.size[0]-4.
     else:
@@ -64,16 +68,9 @@ def evaluate_shift(dxy, basis_vectors, Dsub, gI, inATC=False, return_shifted=Fal
         return R, N, biasSlope
 
 
-def register_DEM(DEMfile, pointData, max_shift=500, delta_initial=50, delta_target=2., inATC=False, DOPLOT=False):
-    delta_xy=np.array([np.NaN, np.NaN])
-    sigma_xy=np.array([np.NaN, np.NaN])
-    N_best=np.NaN
-    R_best=np.NaN
-
-    # read the DEM data
-    DEM=dict()
-    DEM['x'], DEM['y'], DEM['z'], projSys=read_DEM(DEMfile, getProjection=True)
+def register_DEM(DEM,  projSys, pointData, max_shift=500, delta_initial=50, delta_target=2., inATC=False, DOPLOT=False, lTerrain=None):
     demRes=DEM['x'][1]-DEM['x'][0]
+
     # calculate the projection from latlon to the DEM CS
     llRef = osgeo.osr.SpatialReference()
     llRef.ImportFromEPSG(4326)
@@ -113,10 +110,7 @@ def register_DEM(DEMfile, pointData, max_shift=500, delta_initial=50, delta_targ
     
     if Dsub['x'].size < 10 or (np.max(Dsub['x'])-np.min(Dsub['x'])) < 100*demRes or (np.max(Dsub['y'])-np.min(Dsub['y'])) < 100*demRes :
         print("not enough data to span the offsets")
-        if inATC:
-            return delta_xy, sigma_xy, R_best, N_best, np.zeros(2)+np.NaN, basis_vectors
-        else:
-            return delta_xy, sigma_xy, R_best, N_best, np.zeros(3)+np.NaN
+        return dict()
       
     # Define the offsets that will be used to bracket each potential minimum
     dxsub, dysub=np.meshgrid(np.array([-1., 0., 1.]), np.array([-1., 0., 1.]))
@@ -170,9 +164,15 @@ def register_DEM(DEMfile, pointData, max_shift=500, delta_initial=50, delta_targ
     # find the best offset
     iBest=np.argmin(rVals)
     delta_xy=np.array(off_best)
+    if lTerrain is not None:
+        # if L_terrain is set, then the number of DOFs used in calculating the errors
+        # is the number of unique points at a horizontal scale of L_terrain
+        nUnique=len(set([tuple(ii) for ii in np.round(np.c_[Dsub['x']/lTerrain, Dsub['y']/lTerrain])]))
+    else:
+        nUnique=N_vals[iBest]
     # identify the offsets that are not significantly different from the minimum
     # assuming the errors are independent and normally distributed 
-    inEB=np.where(rVals < rVals[iBest]*(1+2/N_vals[iBest]))[0]
+    inEB=np.where(rVals <= rVals[iBest]*(1+1/nUnique))[0]
     # sigma_xy is half the range of offsets that are not significantly different
     # from the minimum
     sigma_xy=np.array([(np.max(xyOff[inEB, 0])-np.min(xyOff[inEB, 0]))/2.,\
@@ -201,11 +201,81 @@ def register_DEM(DEMfile, pointData, max_shift=500, delta_initial=50, delta_targ
             plt.arrow((Dsub['x'][0], Dsub['y'][0]), W/4*basis_vectors[1], color='r') 
         plt.colorbar()
         plt.axis('equal')
+    result={'delta_xy':delta_xy,'sigma_xy':sigma_xy,'R':rVals[iBest],\
+            'N':N_vals[iBest],'biasModel': biasSlope[off_best],'basis_vectors':basis_vectors}
+    return result    
 
-    if inATC:
-        # return the basis vectors if we're working in along-track coordinates
-        return delta_xy, sigma_xy, rVals[off_best], N_vals[off_best], biasSlope[off_best], basis_vectors
-    else:
-        # otherwise, don't.
-        return delta_xy, sigma_xy, rVals[iBest], N_vals[iBest], biasSlope[off_best]
-  
+def main():
+    parser=argparse.ArgumentParser(description='Find the best offset for a DEM relative to a set of altimetry data')
+    parser.add_argument("demFile", type=str)
+    parser.add_argument("pointFile", type=str)
+    parser.add_argument("--ATL06", action="store_true")
+    parser.add_argument("--ATL08", action="store_true")
+    parser.add_argument("--report_file","-r", type=str, default=None)
+    parser.add_argument("--DOPLOT", action="store_true")
+    parser.add_argument("--max_offset",'-m', type=float, default=200)
+    parser.add_argument("--delta_initial", '-d', type=float, default=40)
+    parser.add_argument("--delta_target",'-t', type=float, default=2)
+    parser.add_argument("--l_terrain",'-l', type=float, default=None)
+    parser.add_argument("--dem", action="store_true")
+    parser.add_argument("--inATC", "-i", action="store_true")
+    args=parser.parse_args()
+
+    # read the DEM data
+    DEM=dict()
+    DEM['x'], DEM['y'], DEM['z'], projSys=read_DEM(args.demFile, getProjection=True)
+
+    # read the point data into a dict()
+    pointDataSets=dict()
+    if args.dem:
+        pointData=dict()
+        pointData['x'], pointData['y'], pointData['h']=read_DEM(args.pointFile, asPoints=True)
+        pointDataSets[args.pointFile]=pointData
+    elif args.ATL06 is False and args.ATL08 is False:
+        pointData=dict()
+        h5f=h5py.File(args.pointFile,'r')
+        try:
+            pointData['latitude']=np.array(h5f['latitude'])
+            pointData['longitude']=np.array(h5f['longitude'])
+        except KeyError:
+            pointData['x']=np.array(h5f['x'])
+            pointData['y']=np.array(h5f['y'])
+        pointData['h']=np.array(h5f['h'])
+        pointDataSets[args.pointFile]=pointData
+    elif args.ATL06 is True:
+        beamPairs=['gt1', 'gt2', 'gt3']
+        beams=['l','r']
+        h5f=h5py.File(args.pointFile,'r')
+        pointData=dict()
+        for beamPair in beamPairs:
+            for beam in beams:
+                group=beamPair+beam
+                pointData['longitude']=np.array(h5f['/'+group+'/land_ice_segments/longitude'])
+                pointData['latitude']=np.array(h5f['/'+group+'/land_ice_segments/latitude'])
+                pointData['h']=np.array(h5f['/'+group+'/land_ice_segments/h_li'])
+                pointDataSets[args.pointFile+'/group']=pointData.copy()
+    h5f.close()
+    for dsName in list(pointDataSets):
+        result=register_DEM(DEM, projSys, \
+                pointDataSets(dsName), max_shift=args.max_offset, delta_initial=args.delta_initial, \
+                delta_target=args.delta_target, inATC=args.inATC, DOPLOT=args.DOPLOT,\
+                lTerrain=args.l_terrain)
+        
+        if args.report_file is not None:
+            fid_out=open(args.report_file,'w')
+        else:
+            fid_out=sys.stdout
+            
+            fid_out.write('dataSet = '+dsName)
+            for key in result:
+                if key is "basis_vectors":
+                    fid_out.write("basis_vector_0 = "+str(result[key][0])+"\n")
+                    fid_out.write("basis_vector_1 = "+str(result[key][1])+"\n")
+                else:
+                    fid_out.write(key +" = "+str(result[key])+"\n")
+             
+        
+    fid_out.close()
+    
+if __name__=="__main__":
+    main()
