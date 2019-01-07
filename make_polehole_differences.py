@@ -17,6 +17,7 @@ from osgeo import osr
 import numpy as np
 import h5py
 import os
+import sys
 from ATL11.pt_blockmedian import pt_blockmedian
 from ATL11.ATL06_data import ATL06_data
 from IS2_calval.qfit_data import Qfit_data
@@ -55,20 +56,19 @@ def blockmedian_for_qsub(Qdata, delta):
 sigma_pulse=5.5
 
 ATM_top='/Volumes/ice2/ben/ATM_WF/Bootleg'
-
-ATM_name='20181114_ATM6aT6_rev01'
-ATM_day="20181114"
-#ATM_name='20181111_ATM6aT6_rev01'
-#ATM_day="20181111"
+version=sys.argv[1]
+#ATM_name='20181114_ATM6aT6_rev01'
+#ATM_day="20181114"
+ATM_name='20181112_ATM6aT6_rev01'
+ATM_day="20181112"
 
 Qfit_index=ATM_top+'/'+ATM_day+'/'+ATM_name+'/index_1km/GeoIndex.h5'
 out_dir=ATM_top+'/'+ATM_day+'/'+ATM_name+'/xovers'
 if not os.path.isdir(out_dir):
     os.mkdir(out_dir)
-out_file=out_dir+'/vs_944.h5';    
+out_file=out_dir+'/vs_'+version+'.h5';    
     
-ATL06_index='/Volumes/ice2/ben/scf/AA_06/ASAS/944/index/GeoIndex.h5'
-
+ATL06_index='/Volumes/ice2/ben/scf/AA_06/ASAS/'+version+'/index/GeoIndex.h5'
 
 SRS_proj4='+proj=stere +lat_0=-90 +lat_ts=-71 +lon_0=0 +k=1 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs'
 ATL06_field_dict={None:['delta_time','h_li','h_li_sigma','latitude','longitude','segment_id','sigma_geo_h','atl06_quality_summary'], 
@@ -86,15 +86,9 @@ WGS84a=6378137.0
 WGS84b=6356752.31424
 d2r=np.pi/180.
 delta=[10000., 10000.]
-
-try:
-    Q_GI
-except NameError:
-    Q_GI=None
-    
-if Q_GI is None:
-    Q_GI=geo_index(SRS_proj4=SRS_proj4).from_file(Qfit_index)
-    D6_GI=geo_index(SRS_proj4=SRS_proj4).from_file(ATL06_index)
+  
+Q_GI=geo_index(SRS_proj4=SRS_proj4).from_file(Qfit_index)
+D6_GI=geo_index(SRS_proj4=SRS_proj4).from_file(ATL06_index)
 # the qfit index is at 1 km , the ATL06 index is at 10 km. find the overlap between the two
 # Interesect the ATL06 index with the Qfit index
 xy_10km_Q=unique_points(Q_GI.bins_as_array())
@@ -109,7 +103,7 @@ out_fields=[
 out_template={f:np.NaN for f in out_fields}
 out=list()
 
-plt.figure(1)
+#plt.figure(1)
 for bin_name in D6_GI.keys():
     #plt.clf()
     print(bin_name)
@@ -150,12 +144,12 @@ for bin_name in D6_GI.keys():
     
     # loop over 100-meter bins in the ATL06 data
     for bin100 in GI_D6sub:
-        print("\t"+bin100)
+        #print("\t"+bin100)
         # grab the Qfit bins around the ATL06 bin
         this_GI_Qsub=GI_Qsub.copy_subset(xyBin=[int(item) for item in bin100.split('_')], pad=1)
         # and subset the ATL06 data to the current bin
         D6sub2=D6sub.subset(np.arange(GI_D6sub[bin100]['offset_start'],GI_D6sub[bin100]['offset_end'], dtype=int), by_row=True)
-        print("\t\tbefore:%d" % len(out))
+        #print("\t\tbefore:%d" % len(out))
         for i_AT in range(D6sub2.latitude.shape[0]):
             D6i=D6sub2.subset(i_AT)
             qQ=this_GI_Qsub.query_xy([np.nanmean(D6i.x), np.nanmean(D6i.y)], pad=2, get_data=False)
@@ -235,7 +229,7 @@ for bin_name in D6_GI.keys():
                     print(this_out)
                     print('--------')
                 out.append(this_out)
-        print("\t\tafter:%d" % len(out))
+        #print("\t\tafter:%d" % len(out))
 
 D=dict()
 with h5py.File(out_file,'w') as h5f:
