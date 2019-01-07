@@ -6,7 +6,7 @@ Created on Sun Dec 23 09:02:21 2018
 @author: ben
 """
 import numpy as np
-from read_DEM import read_DEM
+from is2_calval.read_DEM import read_DEM
 import matplotlib.pyplot as plt
 import osgeo
 import scipy.interpolate as sI
@@ -250,14 +250,15 @@ def main():
         for beamPair in beamPairs:
             for beam in beams:
                 group=beamPair+beam
-                pointData['longitude']=np.array(h5f['/'+group+'/land_ice_segments/longitude'])
-                pointData['latitude']=np.array(h5f['/'+group+'/land_ice_segments/latitude'])
-                pointData['h']=np.array(h5f['/'+group+'/land_ice_segments/h_li'])
-                pointDataSets[args.pointFile+'/group']=pointData.copy()
+                if group in h5f:
+                    pointData['longitude']=np.array(h5f['/'+group+'/land_ice_segments/longitude'])
+                    pointData['latitude']=np.array(h5f['/'+group+'/land_ice_segments/latitude'])
+                    pointData['h']=np.array(h5f['/'+group+'/land_ice_segments/h_li'])
+                    pointDataSets[args.pointFile+'/group']=pointData.copy()
     h5f.close()
     for dsName in list(pointDataSets):
         result=register_DEM(DEM, projSys, \
-                pointDataSets(dsName), max_shift=args.max_offset, delta_initial=args.delta_initial, \
+                pointDataSets[dsName], max_shift=args.max_offset, delta_initial=args.delta_initial, \
                 delta_target=args.delta_target, inATC=args.inATC, DOPLOT=args.DOPLOT,\
                 lTerrain=args.l_terrain)
         
