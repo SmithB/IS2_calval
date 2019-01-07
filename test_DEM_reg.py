@@ -13,19 +13,16 @@ import glob
 import h5py
 import scipy.interpolate as sI
 
-files=glob.glob('/Data/REMA_dems/32m/*.tif')
+files=glob.glob('/Volumes/ice2/ben/REMA_dems/8m/*.tif')
 
 atmData=dict()
-ATM_file='/Data/REMA_dems/ATM_blockmedian_data_longline.h5'
+ATM_file='/Volumes/ice2/ben/ATM_WF/Bootleg/ATM_blockmedian_data_longline.h5'
+
 with h5py.File(ATM_file,'r') as f:
     for field in ['x','y','h']:
         atmData[field]=np.array(f[field])
 
-delta_xy, sigma_xy, rVals, N_vals, biasSlope=register_DEM(file, atmData, \
-   max_shift=500, delta_initial=50, delta_target=2., inATC=False, DOPLOT=False)
-
-
 for file in files:
     delta_xy, sigma_xy, rVals, N_vals, biasSlope=register_DEM(file, atmData, \
        max_shift=500, delta_initial=50, delta_target=2., inATC=False, DOPLOT=False)
-    print("%s, delta=%f %f, sigma=%f %f" % (file, delta_xy[0], delta_xy[1], sigma_xy[0], sigma_xy[0]))
+    print("%s, delta=%f %f, sigma=%f %f, N=%3.0f" % (file, delta_xy[0], delta_xy[1], sigma_xy[0], sigma_xy[0], N_vals))
