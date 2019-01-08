@@ -6,14 +6,14 @@ Created on Sun Dec 23 09:02:21 2018
 @author: ben
 """
 import numpy as np
-from is2_calval.read_DEM import read_DEM
+from IS2_calval.read_DEM import read_DEM
 import matplotlib.pyplot as plt
 import osgeo
 import scipy.interpolate as sI
 import argparse
 import h5py
 import sys
-from glob import glob
+from ATL11.ATL06_data import ATL06_data
 
 def validate_xi(xy, xy0):
     # identify points that are inside an interpolation grid
@@ -41,11 +41,11 @@ def evaluate_shift(dxy, basis_vectors, Dsub, gI, inATC=False, return_shifted=Fal
     ii=np.isfinite(dh)
     if inATC:
         # Solve for the residual slope in the along-track direction
-        G=np.c_[np.ones(ii.sum), \
+        G=np.c_[np.ones(ii.sum()), \
                 (Dsub['y'][ii]-Dsub['y'][ii].mean())*basis_vectors[0][1]/1000. + \
                 (Dsub['x'][ii]-Dsub['x'][ii].mean())*basis_vectors[0][0]/1000.]
         # degrees of freedom are Ndata minus two for the fit, one for dx and one for dy
-        nDF=G.size[0]-4.
+        nDF=G.shape[0]-4.
     else:
         # solve for the best-fitting plane for the residuals
         G=np.c_[np.ones(ii.sum()), \
@@ -86,8 +86,10 @@ def register_DEM(DEM,  projSys, pointData, max_shift=500, delta_initial=50, delt
     # calculate the basis vectors for the offsets
     basis_vectors=list()
     if inATC:
+        good_x=np.where(np.isfinite(pointData['x']))[0]
         # if the in_ATC keyword is set, the first basis vector is parallel to the difference between the first and last points
-        basis_vectors.append( np.array([pointData['x'][-1]-pointData['x'][0], pointData['y'][-1]-pointData['y'][0]]) )
+        basis_vectors.append( np.array([pointData['x'][good_x[-1]]-pointData['x'][good_x[0]], \
+          pointData['y'][good_x[-1]]-pointData['y'][good_x[0]]]) )
         basis_vectors[0] = basis_vectors[0] / np.sqrt(np.sum(basis_vectors[0]**2))
         # the second vector is perpendicular to the first
         basis_vectors.append(np.array([-basis_vectors[0][1], basis_vectors[0][0]]))
@@ -181,26 +183,30 @@ def register_DEM(DEM,  projSys, pointData, max_shift=500, delta_initial=50, delt
     if DOPLOT:
         plt.figure()
         plt.subplot(311)
-        plt.scatter(xyOff[:,0], xyOff[:,1], c=np.array(rVals))
+        plt.scatter(xyOff[:,0], xyOff[:,1], c=np.sqrt(np.array(rVals)), linewidth=0, \
+           vmin=np.sqrt(rVals[iBest]),   vmax=np.sqrt(rVals[iBest]*(1+1/nUnique)) )
         plt.plot(delta_xy[0], delta_xy[1],'ko',linewidth=2)
         plt.axis('equal')
+        plt.colorbar()
         
         R, N, tempBiasSlope, this_delta, ii, dh = evaluate_shift( (0. ,0.), basis_vectors, Dsub, gI, inATC, return_shifted=True)
         vrange=np.nanmean(dh)+np.array([-2*np.sqrt(R), 2*np.sqrt(R)])
         plt.subplot(312)
         plt.scatter(Dsub['x'][ii], Dsub['y'][ii], c=dh, linewidth=0, vmin=vrange[0], vmax=vrange[1])
-        plt.colorbar()
         plt.axis('equal')
+        plt.colorbar()
         plt.subplot(313)
         R, N, tempBiasSlope, this_delta, ii, dh = evaluate_shift( delta_xy, basis_vectors, Dsub, gI, inATC, return_shifted=True)
         plt.scatter(Dsub['x'][ii], Dsub['y'][ii], c=dh, linewidth=0, vmin=vrange[0], vmax=vrange[1]) 
         if inATC:
             # plot the basis vectors
-            W=(np.nanmax(Dsub['x'])-np.nanmin(Dsub['y']))
-            plt.arrow((Dsub['x'][0], Dsub['y'][0]), W/4*basis_vectors[0], color='k')
-            plt.arrow((Dsub['x'][0], Dsub['y'][0]), W/4*basis_vectors[1], color='r') 
-        plt.colorbar()
+            W=(np.nanmax(Dsub['y'])-np.nanmin(Dsub['y']))
+            plt.arrow(Dsub['x'][0], Dsub['y'][0], W/4*basis_vectors[0][0], W/4*basis_vectors[0][1], color='k')
+            plt.arrow(Dsub['x'][0], Dsub['y'][0], W/4*basis_vectors[1][0], W/4*basis_vectors[1][1], color='r')
         plt.axis('equal')
+        plt.colorbar()
+         
+        plt.show(block=True)
     result={'delta_xy':delta_xy,'sigma_xy':sigma_xy,'R':rVals[iBest],\
             'N':N_vals[iBest],'biasModel': biasSlope[off_best],'basis_vectors':basis_vectors}
     return result    
@@ -242,20 +248,25 @@ def main():
             pointData['y']=np.array(h5f['y'])
         pointData['h']=np.array(h5f['h'])
         pointDataSets[args.pointFile]=pointData
-    elif args.ATL06 is True:
-        beamPairs=['gt1', 'gt2', 'gt3']
+        h5f.close()
+    elif args.ATL06 is True:        
+        beamPairs=[1, 2, 3]
         beams=['l','r']
-        h5f=h5py.File(args.pointFile,'r')
         pointData=dict()
         for beamPair in beamPairs:
-            for beam in beams:
-                group=beamPair+beam
-                if group in h5f:
-                    pointData['longitude']=np.array(h5f['/'+group+'/land_ice_segments/longitude'])
-                    pointData['latitude']=np.array(h5f['/'+group+'/land_ice_segments/latitude'])
-                    pointData['h']=np.array(h5f['/'+group+'/land_ice_segments/h_li'])
-                    pointDataSets[args.pointFile+'/group']=pointData.copy()
-    h5f.close()
+            pairName='gt%d' % beamPair
+            try:
+                D6=ATL06_data(beam_pair=beamPair).from_file(args.pointFile)
+                for ind, beam in enumerate(beams):
+                    group=pairName+beam                
+                    pointData['longitude']=D6.longitude[:, ind].ravel()
+                    pointData['latitude']=D6.latitude[:, ind].ravel()
+                    pointData['h']=D6.h_li[:, ind].ravel()
+                    if pointData['h'].size > 0:
+                        pointDataSets[args.pointFile+group]=pointData.copy()
+            except KeyError:
+                print("pair %s not in %s\n" % (pairName, args.pointFile) )
+
     for dsName in list(pointDataSets):
         result=register_DEM(DEM, projSys, \
                 pointDataSets[dsName], max_shift=args.max_offset, delta_initial=args.delta_initial, \
@@ -267,7 +278,7 @@ def main():
         else:
             fid_out=sys.stdout
             
-            fid_out.write('dataSet = '+dsName)
+            fid_out.write('dataSet = '+dsName+"\n")
             for key in result:
                 if key is "basis_vectors":
                     fid_out.write("basis_vector_0 = "+str(result[key][0])+"\n")
