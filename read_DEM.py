@@ -42,7 +42,7 @@ def read_DEM(file, band_num=1, bounds=None, skip=1, asPoints=False, getProjectio
         cols=cols[::skip]
         rows=rows[::skip]
     if nodataValue is not None and np.isfinite(nodataValue):
-        bad = z==nodataValue
+        bad = z==np.array(nodataValue).astype(z.dtype)
         z = np.float64(z)
         z[bad] = np.NaN
     else:
