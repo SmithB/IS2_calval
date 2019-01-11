@@ -102,7 +102,7 @@ out_fields=[
     'RDE_50m','t_seg','t_qfit','y_atc', 'x_seg_mean', 'y_seg_mean']
 out_template={f:np.NaN for f in out_fields}
 out=list()
-
+ 
 #plt.figure(1)
 for bin_name in D6_GI.keys():
     #plt.clf()
@@ -125,7 +125,7 @@ for bin_name in D6_GI.keys():
     for item in D6list:
         item.BP=np.zeros_like(item.latitude)+item.beam_pair
         item.list_of_fields.append('BP')
-    
+        
     KK=ATL06_field_dict.copy()
     KK['Derived']=['BP']
     D6sub=ATL06_data(field_dict=KK).from_list(D6list).get_xy(SRS_proj4).get_xy(SRS_proj4)
