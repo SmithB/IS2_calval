@@ -53,7 +53,7 @@ def queryIndex(index_file, demFile, EPSG=3031):
              
     return pointData
     
-def evaluate_shift(dxy, basis_vectors, Dsub, gI, inATC=False, return_shifted=False, doTSE=False, minSigma=2):
+def evaluate_shift(dxy, basis_vectors, Dsub, gI, inATC=False, return_shifted=False, iterateTSE=1, minSigma=2, index=None):
     """ 
         evaluate the misfit between altimetry measurements and a DEM 
         for one shift vector
@@ -63,16 +63,17 @@ def evaluate_shift(dxy, basis_vectors, Dsub, gI, inATC=False, return_shifted=Fal
     this_delta = dxy[0]*basis_vectors[0] + dxy[1]*basis_vectors[1]
     
     hi=np.zeros_like(Dsub['x'])+np.NaN
-    good=validate_xi((Dsub['y']+this_delta[1], Dsub['x']+this_delta[0]), gI.grid)
+    if index is None:
+        good=validate_xi((Dsub['y']+this_delta[1], Dsub['x']+this_delta[0]), gI.grid)
+    else:
+        good=index.copy()
+        good[good]=validate_xi((Dsub['y'][good]+this_delta[1], Dsub['x'][good]+this_delta[0]), gI.grid)
     # interpolate the DEM values at the offset data points
     hi[good]=gI((Dsub['y'][good]+this_delta[1], Dsub['x'][good]+this_delta[0]))
     # calculate the difference between the data values and the interpolated values
     dh=Dsub['h']-hi
     ii=np.isfinite(dh)
-    if doTSE:
-        nIterations=5
-    else:
-        nIterations=1
+
     if inATC:
         # Solve for the residual slope in the along-track direction
         xATC=(Dsub['y']-Dsub['y'][ii].mean())*basis_vectors[0][1] + \
@@ -86,19 +87,19 @@ def evaluate_shift(dxy, basis_vectors, Dsub, gI, inATC=False, return_shifted=Fal
     mask=np.ones(G.shape[0], dtype=bool)
     
     dhValid=dh[ii]
-    for iteration in range(nIterations):
+    for iteration in range(iterateTSE):
         # solve the normal equations for the model      
         try:          
             biasSlope=np.linalg.solve(G[mask,:].transpose().dot(G[mask,:]), G[mask,:].transpose().dot(dhValid[mask]))  
         except np.linalg.LinAlgError:
             biasSlope=np.array([dhValid.mean(), 0.])
         r=dhValid-G.dot(biasSlope)
-        if doTSE:
+        if iterateTSE>1:
             sigma=(sps.scoreatpercentile(r[mask], 84)-sps.scoreatpercentile(r[mask], 16))/2         
             mask=np.abs(r)<3*sigma
         # calculate the mean-squared residual
     R=np.sum(r[mask]**2)/(mask.sum()-G.shape[1]-2)
-    if doTSE:
+    if iterateTSE>1:
         ii_ind=np.where(ii)[0]
         ii[ii_ind[mask==0]]=0
     # save the data count
@@ -170,7 +171,7 @@ def register_DEM(DEM,  projSys, pointData, max_shift=500, delta_initial=50, delt
         return dict(), None, None, xyRaw
    
     # evaluate the lag-zero shift and eliminate the largest residuals
-    R0, N0, biasSlope0, validIndex = evaluate_shift(np.array([0., 0.]), basis_vectors, Dsub, gI, inATC, doTSE=True)
+    R0, N0, biasSlope0, validIndex = evaluate_shift(np.array([0., 0.]), basis_vectors, Dsub, gI, inATC, iterateTSE=5)
 
     if np.max(Dsub['h'][validIndex])-np.min(Dsub['h'][validIndex]) < 10:
         print("not enough topography to allow a match")
@@ -241,7 +242,8 @@ def register_DEM(DEM,  projSys, pointData, max_shift=500, delta_initial=50, delt
         iBest=np.argmin(rVals)
         delta_xy=np.array(off_best)
         Dsub['h']=h0
-        R0, N0, BiasSlope0, delta0, validIndex, Dshift0 = evaluate_shift( delta_xy, basis_vectors, Dsub, gI, inATC, return_shifted=True)
+        # run this shift again to find the best set of editied residuals
+        R0, N0, BiasSlope0, delta0, validIndex, Dshift0 = evaluate_shift( delta_xy, basis_vectors, Dsub, gI, inATC, return_shifted=True, iterateTSE=5)
         
     if lTerrain is not None:
         # if L_terrain is set, then the number of DOFs used in calculating the errors
