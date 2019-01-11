@@ -53,7 +53,7 @@ def read_DEM(file, band_num=1, bounds=None, skip=1, asPoints=False, getProjectio
         x,y=np.meshgrid(x, y)
         keep=np.isfinite(z.ravel())
         if getProjection:
-            x.ravel()[keep], y.ravel()[keep], z.ravel()[keep], proj
+            return x.ravel()[keep], y.ravel()[keep], z.ravel()[keep], proj
         else:
             return x.ravel()[keep], y.ravel()[keep], z.ravel()[keep]
     else:
