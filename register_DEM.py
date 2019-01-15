@@ -7,6 +7,7 @@ Created on Sun Dec 23 09:02:21 2018
 """
 import numpy as np
 from IS2_calval.read_DEM import read_DEM
+from ATL11.pt_blockmedian import pt_blockmedian
 import matplotlib.pyplot as plt
 import osgeo
 import scipy.interpolate as sI
@@ -24,7 +25,7 @@ def validate_xi(xy, xy0):
         good=good & (xy[dim] >= xy0[dim][0]) & (xy[dim] <= xy0[dim][-1])
     return good
 
-def queryIndex(index_file, demFile, EPSG=3031):
+def queryIndex(index_file, demFile, EPSG=3031, verbose=False):
     from ATL11.geo_index import geo_index
     from IS2_calval.demBounds import demBounds
   
@@ -36,6 +37,11 @@ def queryIndex(index_file, demFile, EPSG=3031):
     gI=geo_index().from_file(index_file)
     xr, yr = demBounds( demFile, proj4=gI.attrs['SRS_proj4'] )
     D6es=gI.query_xy_box( xr+np.array([-1e4, 1e4]), yr+np.array([-1e4, 1e4]), get_data=True, fields=field_dict)
+    if verbose:
+        temp=gI.query_xy_box( xr+np.array([-1e4, 1e4]), yr+np.array([-1e4, 1e4]), get_data=False)
+        print("list of datasets:")
+        for key in set(temp.keys()):             
+            print("\t%s"% key)
     for D6 in D6es:
         f06.phDensityFilter(D6, toNaN=True, subset=True)
         if D6.h_li.size==0:
@@ -52,6 +58,53 @@ def queryIndex(index_file, demFile, EPSG=3031):
                 pointData[this_name]={'latitude':D6.latitude[:, beam], 'longitude':D6.longitude[:,beam],'h':D6.h_li[:,beam],'AD':AD+np.zeros_like(D6.delta_time), 'orbit':D6.orbit+np.zeros_like(D6.delta_time)}
              
     return pointData
+    
+def readPointData(args):
+    pointDataSets=dict()
+    if args.dem:
+        pointData=dict()
+        pointData['x'], pointData['y'], pointData['h']=read_DEM(args.pointFile, asPoints=True)
+        pointDataSets[args.pointFile]=pointData
+    elif args.index is True:
+        pointDataSets=queryIndex(args.pointFile, args.demFile, verbose=args.verbose)
+    elif args.ATL06 is False and args.ATL08 is False:
+        pointData=dict()
+        h5f=h5py.File(args.pointFile,'r')
+        try:
+            pointData['latitude']=np.array(h5f['latitude'])
+            pointData['longitude']=np.array(h5f['longitude'])
+        except KeyError:
+            pointData['x']=np.array(h5f['x'])
+            pointData['y']=np.array(h5f['y'])
+        pointData['h']=np.array(h5f['h'])
+        pointDataSets[args.pointFile]=pointData
+        h5f.close()
+    elif args.ATL06 is True:        
+        beamPairs=[1, 2, 3]
+        beams=['l','r']
+        pointData=dict()
+        for beamPair in beamPairs:
+            pairName='gt%d' % beamPair
+            try:
+                D6=ATL06_data(beam_pair=beamPair).from_file(args.pointFile)
+                for ind, beam in enumerate(beams):
+                    group=pairName+beam                
+                    pointData['longitude']=D6.longitude[:, ind].ravel()
+                    pointData['latitude']=D6.latitude[:, ind].ravel()
+                    pointData['h']=D6.h_mean[:, ind].ravel()
+                    if pointData['h'].size > 0:
+                        pointDataSets[args.pointFile+":"+group]=pointData.copy()
+            except KeyError:
+                print("pair %s not in %s\n" % (pairName, args.pointFile) )
+    if args.blockMedian is not None:
+        for key in list(pointDataSets):
+            pointDataSets[key]['x'], pointDataSets[key]['y'], pointDataSets[key]['h'] = \
+                pt_blockmedian(pointDataSets[key]['x'], pointDataSets[key]['y'], pointDataSets[key]['h'], delta=args.blockMedian)
+    # assign the 'name' property of the dataset 
+    for key in pointDataSets:
+        pointDataSets[key]['name']=key
+        
+    return pointDataSets
     
 def evaluate_shift(dxy, basis_vectors, Dsub, gI, inATC=False, return_shifted=False, iterateTSE=1, minSigma=2, index=None):
     """ 
@@ -92,7 +145,8 @@ def evaluate_shift(dxy, basis_vectors, Dsub, gI, inATC=False, return_shifted=Fal
         try:          
             biasSlope=np.linalg.solve(G[mask,:].transpose().dot(G[mask,:]), G[mask,:].transpose().dot(dhValid[mask]))  
         except np.linalg.LinAlgError:
-            biasSlope=np.array([dhValid.mean(), 0.])
+            biasSlope=np.zeros(G.shape[1])
+            biasSlope[0]=dhValid.mean()
         r=dhValid-G.dot(biasSlope)
         if iterateTSE>1:
             sigma=(sps.scoreatpercentile(r[mask], 84)-sps.scoreatpercentile(r[mask], 16))/2         
@@ -111,13 +165,13 @@ def evaluate_shift(dxy, basis_vectors, Dsub, gI, inATC=False, return_shifted=Fal
         Dshift['DEM_corr']=np.zeros_like(Dsub['x'])+np.NaN
         biasSlopeNoZero=biasSlope.copy()
         biasSlopeNoZero[0]=0
-        Dshift['DEM_corr'][ii]=hi[ii]+G.dot(biasSlopeNoZero)
+        Dshift['DEM_corr'][ii]=hi[ii]+G[mask,:].dot(biasSlopeNoZero)
         if inATC:
             Dshift['xATC']=xATC + dxy[0]
         Dshift['x']=Dsub['x']+this_delta[0]
         Dshift['y']=Dsub['y']+this_delta[1]
         Dshift['dh']=np.zeros_like(Dsub['x'])+np.NaN
-        Dshift['dh'][ii]=dh[ii]-G.dot(biasSlope)
+        Dshift['dh'][ii]=dh[ii]-G[mask,:].dot(biasSlope)
         return R, N, biasSlope, ii, this_delta, Dshift
     else:
         return R, N, biasSlope, ii
@@ -160,7 +214,8 @@ def register_DEM(DEM,  projSys, pointData, max_shift=500, delta_initial=50, delt
     valid=validate_xi((pointData['y'], pointData['x']), gI.grid)
     Dsub=dict()
     for field in pointData.keys():
-        Dsub[field]=pointData[field][valid]
+        if field is not 'name':
+            Dsub[field]=pointData[field][valid]
     # next select the subset of the subset that has valid DEM values    
     valid=np.isfinite(gI((Dsub['y'], Dsub['x'])))
     for field in Dsub.keys():
@@ -243,7 +298,8 @@ def register_DEM(DEM,  projSys, pointData, max_shift=500, delta_initial=50, delt
         delta_xy=np.array(off_best)
         Dsub['h']=h0
         # run this shift again to find the best set of editied residuals
-        R0, N0, BiasSlope0, delta0, validIndex, Dshift0 = evaluate_shift( delta_xy, basis_vectors, Dsub, gI, inATC, return_shifted=True, iterateTSE=5)
+        #R, N, biasSlope, ii, this_delta, Dshift
+        R0, N0, BiasSlope0, validIndex, delta0, Dshift0 = evaluate_shift( delta_xy, basis_vectors, Dsub, gI, inATC, return_shifted=True, iterateTSE=5)
         
     if lTerrain is not None:
         # if L_terrain is set, then the number of DOFs used in calculating the errors
@@ -253,20 +309,20 @@ def register_DEM(DEM,  projSys, pointData, max_shift=500, delta_initial=50, delt
         nUnique=N_vals[iBest]
     # identify the offsets that are not significantly different from the minimum
     # assuming the errors are independent and normally distributed 
-    inEB=np.where(rVals <= rVals[iBest]*(1+1/nUnique))[0]
+    inEB=np.where(rVals <= rVals[iBest]*(1+np.sqrt(2/nUnique)))[0]
     # sigma_xy is half the range of offsets that are not significantly different
     # from the minimum
     sigma_xy=np.array([(np.max(xyOff[inEB, 0])-np.min(xyOff[inEB, 0]))/2.,\
                        (np.max(xyOff[inEB, 1])-np.min(xyOff[inEB, 1]))/2.])  
   
-    R0, N0, BiasSlope0, delta0, Valid0, Dshift0 = evaluate_shift( (0. ,0.), basis_vectors, Dsub, gI, inATC, return_shifted=True)        
-    R1, N1, BiasSlope1, delta1, Valid1, Dshift1 = evaluate_shift( delta_xy, basis_vectors, Dsub, gI, inATC, return_shifted=True)        
+    R0, N0, BiasSlope0, Valid0, delta0, Dshift0 = evaluate_shift( (0. ,0.), basis_vectors, Dsub, gI, inATC, return_shifted=True)        
+    R1, N1, BiasSlope1, Valid1, delta1, Dshift1 = evaluate_shift( delta_xy, basis_vectors, Dsub, gI, inATC, return_shifted=True)        
    
     if DOPLOT:
         plt.figure()
         plt.subplot(311)
         plt.scatter(xyOff[:,0], xyOff[:,1], c=np.sqrt(np.array(rVals)), linewidth=0, \
-           vmin=np.sqrt(rVals[iBest]),   vmax=np.sqrt(rVals[iBest]*(1+1/nUnique)) )
+           vmin=np.sqrt(rVals[iBest]),   vmax=np.sqrt(rVals[iBest]*(1+np.sqrt(2/nUnique))) )
         plt.plot(delta_xy[0], delta_xy[1],'ko',linewidth=2)
         plt.axis('equal')
         plt.colorbar()
@@ -275,8 +331,8 @@ def register_DEM(DEM,  projSys, pointData, max_shift=500, delta_initial=50, delt
         
         if inATC:
             plt.subplot(323)
-            plt.plot(Dshift0['xATC'], Dshift0['DEM_corr'],'k')
-            plt.plot(Dshift0['xATC'], Dshift0['h'],'k--')
+            plt.plot(Dshift0['xATC'], Dshift0['DEM_corr'],'k.')
+            plt.plot(Dshift0['xATC'], Dshift0['h'],'r.')
             plt.subplot(324)
             plt.plot(Dshift0['xATC'], Dshift0['dh'])
         else: 
@@ -288,10 +344,10 @@ def register_DEM(DEM,  projSys, pointData, max_shift=500, delta_initial=50, delt
             
         if inATC:
             plt.subplot(325)
-            plt.plot(Dshift1['xATC'], Dshift1['DEM_corr'],'k')
-            plt.plot(Dshift1['xATC'], Dshift1['h'],'k--')
+            plt.plot(Dshift1['xATC'][validIndex], Dshift1['DEM_corr'][validIndex],'k.')
+            plt.plot(Dshift1['xATC'][validIndex], Dshift1['h'][validIndex],'r.')
             plt.subplot(326)
-            plt.plot(Dshift1['xATC'], Dshift1['dh'])
+            plt.plot(Dshift1['xATC'][validIndex], Dshift1['dh'][validIndex])
         else:
             plt.subplot(313)
             plt.scatter(Dshift1['x'], Dshift1['y'], c=Dshift1['dh'], linewidth=0, vmin=vrange[0], vmax=vrange[1]) 
@@ -316,51 +372,17 @@ def main():
     parser.add_argument("--l_terrain",'-l', type=float, default=None)
     parser.add_argument("--dem", action="store_true")
     parser.add_argument("--inATC", "-i", action="store_true")
+    parser.add_argument("--blockMedian", "-b", type=float, default=None)
+    parser.add_argument("--verbose",'-v', action="store_true")
     args=parser.parse_args()
 
     # read the DEM data
     DEM=dict()
     DEM['x'], DEM['y'], DEM['z'], projSys=read_DEM(args.demFile, getProjection=True)
-
-    # read the point data into a dict()
-    pointDataSets=dict()
-    if args.dem:
-        pointData=dict()
-        pointData['x'], pointData['y'], pointData['h']=read_DEM(args.pointFile, asPoints=True)
-        pointDataSets[args.pointFile]=pointData
-    elif args.index is True:
-        pointDataSets=queryIndex(args.pointFile, args.demFile)
-    elif args.ATL06 is False and args.ATL08 is False:
-        pointData=dict()
-        h5f=h5py.File(args.pointFile,'r')
-        try:
-            pointData['latitude']=np.array(h5f['latitude'])
-            pointData['longitude']=np.array(h5f['longitude'])
-        except KeyError:
-            pointData['x']=np.array(h5f['x'])
-            pointData['y']=np.array(h5f['y'])
-        pointData['h']=np.array(h5f['h'])
-        pointDataSets[args.pointFile]=pointData
-        h5f.close()
-    elif args.ATL06 is True:        
-        beamPairs=[1, 2, 3]
-        beams=['l','r']
-        pointData=dict()
-        for beamPair in beamPairs:
-            pairName='gt%d' % beamPair
-            try:
-                D6=ATL06_data(beam_pair=beamPair).from_file(args.pointFile)
-                for ind, beam in enumerate(beams):
-                    group=pairName+beam                
-                    pointData['longitude']=D6.longitude[:, ind].ravel()
-                    pointData['latitude']=D6.latitude[:, ind].ravel()
-                    pointData['h']=D6.h_mean[:, ind].ravel()
-                    if pointData['h'].size > 0:
-                        pointDataSets[args.pointFile+":"+group]=pointData.copy()
-            except KeyError:
-                print("pair %s not in %s\n" % (pairName, args.pointFile) )
-
-
+    
+    # read the pointdata file
+    pointDataSets=readPointData(args)
+ 
     if args.report_file is not None:
         fid_out=open(args.report_file,'w')
     else:
@@ -406,7 +428,8 @@ def main():
             Dsub=DS[1]
             plt.scatter(Dsub['x'], Dsub['y'], c=Dsub['dh'], linewidth=0, vmin=-1, vmax=1, cmap='bwr')
         plt.show(block=True)
-    fid_out.close()    
+    if args.report_file is not None:
+        fid_out.close()    
     return
     
 if __name__=="__main__":
