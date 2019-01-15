@@ -102,7 +102,8 @@ if args.waveforms:
 if args.scat_file is not None:
     scat_file=args.scat_file
 else:
-    scat_file='/home/ben/Dropbox/ATM_red_green/subsurface_srf_no_BC.h5'
+    # look for the default scattering file in the directory where the source file is found
+    scat_file=os.path.dirname(os.path.abspath(__file__)) + 'subsurface_srf_no_BC.h5'
 if not os.path.isfile(scat_file):
     print("%s does not exist" % scat_file)
     exit()
