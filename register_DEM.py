@@ -15,6 +15,7 @@ import scipy.stats as sps
 import argparse
 import h5py
 import sys
+import os
 from ATL11.ATL06_data import ATL06_data
 import ATL11.ATL06_filters as f06
 
@@ -25,7 +26,7 @@ def validate_xi(xy, xy0):
         good=good & (xy[dim] >= xy0[dim][0]) & (xy[dim] <= xy0[dim][-1])
     return good
 
-def queryIndex(index_file, demFile, EPSG=3031, verbose=False):
+def queryIndex(index_file, demFile, verbose=False):
     from ATL11.geo_index import geo_index
     from IS2_calval.demBounds import demBounds
   
@@ -36,7 +37,12 @@ def queryIndex(index_file, demFile, EPSG=3031, verbose=False):
                     'derived':['valid']}
     gI=geo_index().from_file(index_file)
     xr, yr = demBounds( demFile, proj4=gI.attrs['SRS_proj4'] )
-    D6es=gI.query_xy_box( xr+np.array([-1e4, 1e4]), yr+np.array([-1e4, 1e4]), get_data=True, fields=field_dict)
+    xr += np.array([-1e4, 1e4])
+    yr += np.array([-1e4, 1e4])
+    xy=gI.bins_as_array()
+    plt.figure(); plt.plot(xy[0], xy[1],'k.')
+    plt.plot(xr[[0, 1, 1, 0, 0]], yr[[0, 0, 1, 1, 0]],'r')
+    D6es=gI.query_xy_box( xr, yr, get_data=True, fields=field_dict)
     if verbose:
         temp=gI.query_xy_box( xr+np.array([-1e4, 1e4]), yr+np.array([-1e4, 1e4]), get_data=False)
         print("list of datasets:")
@@ -54,8 +60,9 @@ def queryIndex(index_file, demFile, EPSG=3031, verbose=False):
                 first=np.max(np.where(np.isfinite(D6.latitude[:,beam]))[0])
                 last=np.min(np.where(np.isfinite(D6.latitude[:,beam]))[0])
                 AD=np.sign(D6.latitude[last, beam]-D6.latitude[first, beam])
-                this_name='ATL06_DOY=%3.2f_gt%d%s' % (np.nanmean(D6.delta_time/24/3600), D6.beam_pair, beam_names[beam])
-                pointData[this_name]={'latitude':D6.latitude[:, beam], 'longitude':D6.longitude[:,beam],'h':D6.h_li[:,beam],'AD':AD+np.zeros_like(D6.delta_time), 'orbit':D6.orbit+np.zeros_like(D6.delta_time)}
+                this_name="%s:gt%d%s" % (os.path.basename(D6.file), D6.beam_pair, beam_names[beam])
+                
+                pointData[this_name]={'latitude':D6.latitude[:, beam], 'longitude':D6.longitude[:,beam],'h':D6.h_li[:,beam],'delta_time':D6.delta_time[:, beam],'AD':AD+np.zeros_like(D6.delta_time), 'orbit':D6.orbit+np.zeros_like(D6.delta_time)}
              
     return pointData
     
@@ -80,18 +87,36 @@ def readPointData(args):
         pointDataSets[args.pointFile]=pointData
         h5f.close()
     elif args.ATL06 is True:        
+        field_dict={None:['delta_time','h_li','h_li_sigma','latitude','longitude'], 
+                'fit_statistics':['dh_fit_dx', 'h_rms_misfit','h_robust_sprd','n_fit_photons', 'signal_selection_source','snr_significance','w_surface_window_final', 'h_mean'],
+                'derived':['valid']}
+
         beamPairs=[1, 2, 3]
         beams=['l','r']
         pointData=dict()
         for beamPair in beamPairs:
             pairName='gt%d' % beamPair
             try:
-                D6=ATL06_data(beam_pair=beamPair).from_file(args.pointFile)
+                D6=ATL06_data(beam_pair=beamPair, field_dict=field_dict).from_file(args.pointFile)
+                f06.phDensityFilter(D6, toNaN=True, subset=True, minDensity={'weak':0.5, 'strong':2})
+                #if D6.h_li.size==0:
+                #    continue
+                #f06.segDifferenceFilter(D6, tol=10, toNaN=True, subset=True)
+                if D6.h_li.size==0:
+                    continue
                 for ind, beam in enumerate(beams):
+                    if D6.longitude.size < 50:
+                        continue
                     group=pairName+beam                
                     pointData['longitude']=D6.longitude[:, ind].ravel()
                     pointData['latitude']=D6.latitude[:, ind].ravel()
                     pointData['h']=D6.h_mean[:, ind].ravel()
+                    pointData['delta_time']=D6.delta_time[:, ind].ravel()
+                    these=np.where(np.isfinite(D6.latitude[:,ind]))[0]
+                    if these.size > 2:
+                        first=np.max(these)
+                        last=np.min(these)
+                        pointData['AD']=np.sign(D6.latitude[last, ind]-D6.latitude[first, ind])*np.ones_like(pointData['h'])
                     if pointData['h'].size > 0:
                         pointDataSets[args.pointFile+":"+group]=pointData.copy()
             except KeyError:
@@ -334,7 +359,7 @@ def register_DEM(DEM,  projSys, pointData, max_shift=500, delta_initial=50, delt
             plt.plot(Dshift0['xATC'], Dshift0['DEM_corr'],'k.')
             plt.plot(Dshift0['xATC'], Dshift0['h'],'r.')
             plt.subplot(324)
-            plt.plot(Dshift0['xATC'], Dshift0['dh'])
+            plt.plot(Dshift0['xATC'], Dshift0['dh'],'k.')
         else: 
             vrange=np.array([-2*np.sqrt(R0), 2*np.sqrt(R0)])
             plt.subplot(312)
@@ -347,7 +372,7 @@ def register_DEM(DEM,  projSys, pointData, max_shift=500, delta_initial=50, delt
             plt.plot(Dshift1['xATC'][validIndex], Dshift1['DEM_corr'][validIndex],'k.')
             plt.plot(Dshift1['xATC'][validIndex], Dshift1['h'][validIndex],'r.')
             plt.subplot(326)
-            plt.plot(Dshift1['xATC'][validIndex], Dshift1['dh'][validIndex])
+            plt.plot(Dshift1['xATC'][validIndex], Dshift1['dh'][validIndex],'k.')
         else:
             plt.subplot(313)
             plt.scatter(Dshift1['x'], Dshift1['y'], c=Dshift1['dh'], linewidth=0, vmin=vrange[0], vmax=vrange[1]) 
@@ -355,6 +380,11 @@ def register_DEM(DEM,  projSys, pointData, max_shift=500, delta_initial=50, delt
         
     result={'delta_xy':delta_xy,'sigma_xy':sigma_xy,'R':rVals[iBest],\
             'N':N_vals[iBest],'biasModel': biasSlope[off_best],'basis_vectors':basis_vectors}
+    if 'latitude' in Dsub:
+        result['lat_mean']=Dsub['latitude'].mean()
+        result['lon_mean']=Dsub['longitude'].mean()
+    if 'delta_time' in Dsub and Dsub['delta_time'].size > 0:
+        result['DOY']=np.nanmean(Dsub['delta_time'])/24/3600
     return result, Dshift0, Dshift1, xyRaw
 
 def main():
