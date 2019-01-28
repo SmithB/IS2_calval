@@ -20,6 +20,7 @@ import argparse
 import h5py
 import os
 np.seterr(invalid='ignore')
+os.environ["MKL_NUM_THREADS"]="2"  # multiple threads don't help that much
 
 def get_tx_est(filename, nShots=np.Inf):
     # get the transmit pulse mean
@@ -68,7 +69,6 @@ def get_tx_est(filename, nShots=np.Inf):
     TX.tc = np.array(TX.nSigmaMean()[0])
     TX.normalize()
     return TX
-
 
 def proc_RX(WF_file, shots, sigmas=np.arange(0, 5, 0.25), deltas=np.arange(-1, 1.5, 0.5), TX=None, countPeaks=True, WF_library=None, TX_file=None, scat_file=None, catalogBuffer=None):
     """
