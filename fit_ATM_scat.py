@@ -8,17 +8,18 @@ Created on Wed Nov 14 21:51:42 2018
 
 import numpy as np
 import matplotlib.pyplot as plt
-from read_ATM_wfs import read_ATM_file
-from fit_waveforms import fit_catalog
+from IS2_calval.read_ATM_wfs import read_ATM_file
+from IS2_calval.fit_waveforms import fit_catalog
 #from fit_waveforms import waveform
-from make_rx_scat_catalog import make_rx_scat_catalog
-from waveform import waveform
+from IS2_calval.make_rx_scat_catalog import make_rx_scat_catalog
+from IS2_calval.waveform import waveform
 from time import time
 import scipy.stats as sps
 import copy
 import argparse
 import h5py
 import os
+
 np.seterr(invalid='ignore')
 os.environ["MKL_NUM_THREADS"]="2"  # multiple threads don't help that much
 
@@ -70,7 +71,7 @@ def get_tx_est(filename, nShots=np.Inf):
     TX.normalize()
     return TX
 
-def proc_RX(WF_file, shots, sigmas=np.arange(0, 5, 0.25), deltas=np.arange(-1, 1.5, 0.5), TX=None, countPeaks=True, WF_library=None, TX_file=None, scat_file=None, catalogBuffer=None):
+def proc_RX(WF_file, shots, rxData=None, sigmas=np.arange(0, 5, 0.25), deltas=np.arange(-1, 1.5, 0.5), TX=None, countPeaks=True, WF_library=None, TX_file=None, scat_file=None, catalogBuffer=None):
     """
         Routine to process the wavefoms in an ATM waveform file.  Can be run inside 
         the loop of fit_ATM_scat, or run on a few waveforms at a time for plot generation
@@ -85,12 +86,13 @@ def proc_RX(WF_file, shots, sigmas=np.arange(0, 5, 0.25), deltas=np.arange(-1, 1
         WF_library.update({0.:TX}) 
         if scat_file is not None:
             WF_library.update(make_rx_scat_catalog(TX, h5_file=scat_file))
-     
-    D=read_ATM_file(WF_file, shot0=shots[0], nShots=shots[-1]-shots[0])
-    
-    # make the return waveform structure
-    rxData=D['RX'][0:D['RX'].size]
-    rxData.t=rxData.t-rxData.t.mean()
+    if rxData is None: 
+        # make the return waveform structure
+        D=read_ATM_file(WF_file, shot0=shots[0], nShots=shots[-1]-shots[0])
+        rxData=D['RX']
+        rxData.t -= np.nanmean(rxData.t)
+    else:
+        D=dict()
     if countPeaks:
         rxData.nPeaks=rxData.count_peaks(W=4)
     else:
@@ -104,7 +106,7 @@ def proc_RX(WF_file, shots, sigmas=np.arange(0, 5, 0.25), deltas=np.arange(-1, 1
     # fit the data. Catalogbuffer contains waveform templates that have already been tried
     D_out, catalogBuffer=fit_catalog(rxData, WF_library, sigmas, deltas, return_data_est=True, \
                                      return_catalog=True, catalog=catalogBuffer)
-    return D_out, D, rxData, catalogBuffer
+    return D_out, rxData, D, catalogBuffer
 
 
 def main():
@@ -116,6 +118,7 @@ def main():
     parser.add_argument('--nShots', '-n', type=int, default=np.Inf)
     parser.add_argument('--DOPLOT', '-P', action='store_true')
     parser.add_argument('--IR', '-I', action='store_true')
+    parser.add_argument('--TXfile', '-T', type=str, default=None)
     parser.add_argument('--waveforms', '-w', action='store_true', default=False)
     args=parser.parse_args()
     
@@ -141,7 +144,7 @@ def main():
         scat_file=args.scat_file
     else:
         # look for the default scattering file in the directory where the source file is found
-        scat_file=os.path.dirname(os.path.abspath(__file__)) + 'subsurface_srf_no_BC.h5'
+        scat_file=os.path.dirname(os.path.abspath(__file__)) + '/subsurface_srf_no_BC.h5'
     if not os.path.isfile(scat_file):
         print("%s does not exist" % scat_file)
         exit()
@@ -151,7 +154,14 @@ def main():
     start_vals=args.startShot+np.arange(0, nWFs, blocksize, dtype=int)
     
     # get the transmit pulse
-    TX = get_tx_est(args.input_file, nShots=5000)
+    if args.TXfile is not None:
+        with h5py.File(args.TXfile,'r') as fh:
+            TX=waveform(np.array(fh['/TX/t']), np.array(fh['/TX/p']) )
+        TX.t -= np.nanmean(TX.t)
+        TX.tc = np.array(TX.nSigmaMean()[0])
+        TX.normalize()
+    else:
+        TX = get_tx_est(args.input_file, nShots=5000)
     
     # make the library of templates
     WF_library = dict()
@@ -178,7 +188,7 @@ def main():
     
     for shot0 in start_vals:
         shots=np.arange(shot0, np.minimum(shot0+blocksize, lastShot))
-        D_out, D, rxData, catalogBuffer=proc_RX(args.input_file, shots, sigmas=sigmas, deltas=deltas,\
+        D_out, rxData, D, catalogBuffer=proc_RX(args.input_file, shots, sigmas=sigmas, deltas=deltas,\
              TX=TX, WF_library=WF_library, catalogBuffer=catalogBuffer, countPeaks=countPeaks)
              
         N_out=D_out['shot'].size
