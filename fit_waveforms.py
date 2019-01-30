@@ -8,7 +8,7 @@ import numpy as np
 from numpy.linalg import inv
 import matplotlib.pyplot as plt
 import bisect
-from waveform import waveform
+from IS2_calval.waveform import waveform
 from time import time
 DOPLOT=False
 
