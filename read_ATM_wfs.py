@@ -10,7 +10,7 @@ import numpy as np
 #import matplotlib
 #matplotlib.use('nbagg')
 import matplotlib.pyplot as plt
-from waveform import waveform
+from IS2_calval.waveform import waveform
 
 def read_wf(D, shot, starting_sample=0, read_tx=False, read_rx=False, read_all=False):
     """
@@ -112,8 +112,8 @@ def read_ATM_file(fname, getCountAndReturn=False, shot0=0, nShots=np.Inf, readTX
         if readRX:
             RX=np.c_[RX].transpose()
             nPeaks=np.c_[nPeaks].ravel()
-            result['RX']=waveform(np.arange(RX.shape[0])*dt, RX, shots=shots, nPeaks=np.c_[nPeaks.ravel()])
-        
+            result['RX']=waveform(np.arange(RX.shape[0])*dt, RX, shots=shots, nPeaks=nPeaks)
+            result['rx_samp0']=rx_samp0
     return result
 
 def normalize_wf(wf, noise_samps=[0, 30]):
