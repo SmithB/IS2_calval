@@ -21,7 +21,7 @@ import h5py
 import os
 
 np.seterr(invalid='ignore')
-os.environ["MKL_NUM_THREADS"]="2"  # multiple threads don't help that much
+os.environ["MKL_NUM_THREADS"]="1"  # multiple threads don't help that much
 
 def get_tx_est(filename, nShots=np.Inf):
     # get the transmit pulse mean
@@ -78,8 +78,11 @@ def proc_RX(WF_file, shots, rxData=None, sigmas=np.arange(0, 5, 0.25), deltas=np
     """
     if TX is None and TX_file is not None:
         with h5py.file(TX_file) as h5f:
-            TX={'t':np.array(h5f['/TX/t']),'p':np.array(h5f(['/TX/p']))}
-     
+            TX=waveform(np.array(h5f['/TX/t']),np.array(h5f(['/TX/p'])))
+    TX.t -= TX.nSigmaMean()[0]
+    TX.tc = 0
+            
+        
     # make the library of templates
     if WF_library is None:
         WF_library = dict()
@@ -148,32 +151,29 @@ def main():
     if not os.path.isfile(scat_file):
         print("%s does not exist" % scat_file)
         exit()
-     
-    # choose how to divide the output
-    blocksize=1000
-    start_vals=args.startShot+np.arange(0, nWFs, blocksize, dtype=int)
-    
+
     # get the transmit pulse
     if args.TXfile is not None:
         with h5py.File(args.TXfile,'r') as fh:
             TX=waveform(np.array(fh['/TX/t']), np.array(fh['/TX/p']) )
-        TX.t -= np.nanmean(TX.t)
+        TX.t -= TX.nSigmaMean()[0]
         TX.tc = np.array(TX.nSigmaMean()[0])
         TX.normalize()
-    else:
+    else:     
         TX = get_tx_est(args.input_file, nShots=5000)
-    
+
     # make the library of templates
     WF_library = dict()
     WF_library.update({0.:TX})
     if args.IR is False:
         WF_library.update(make_rx_scat_catalog(TX, h5_file=scat_file))
-        R_vals=np.sort(list(WF_library))
-    else:
-        R_vals=[0]
         
     print("Returns:")
     # loop over start vals (one block at a time...)
+    # choose how to divide the output
+    blocksize=1000
+    start_vals=args.startShot+np.arange(0, nWFs, blocksize, dtype=int)
+
     catalogBuffer=None
     time_old=time()
     
