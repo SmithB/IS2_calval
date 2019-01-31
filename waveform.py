@@ -127,6 +127,16 @@ class waveform(object):
         self.p=self.p/np.nanmax(self.p, axis=0)
         return self
     
+    def t50(self):
+        t50=np.zeros(self.size)
+        for col in np.arange(self.size):
+            p=self.p[:,col]
+            p50=np.nanmax(p)/2
+            i50=np.argwhere(p>p50)[0]
+            dp=(p50 - p[i50-1]) / (p[i50] - p[i50-1])
+            t50[col] = self.t[i50-1] + dp*self.dt
+        return t50
+        
     def calcMean(self, threshold=255):
         good=np.sum( (~np.isfinite(self.p)) & (self.p < threshold), axis=0) < 2
         return waveform(self.t, self[good].normalize().p.mean(axis=1))
