@@ -23,23 +23,42 @@ import os
 np.seterr(invalid='ignore')
 os.environ["MKL_NUM_THREADS"]="1"  # multiple threads don't help that much
 
-def get_tx_est(filename, nShots=np.Inf):
-    # get the transmit pulse mean
-    D=read_ATM_file(filename, nShots=nShots, readTX=True, readRX=False)
-    
-    TXm=D['TX'].calcMean().normalize()
-    misfit=np.zeros(D['TX'].size)
-    TXn=D['TX'][np.arange(0, D['TX'].size, dtype=int)].normalize()
-    misfit=np.sqrt(np.mean((TXn.p-TXm.p)**2, axis=0))
-    
-    # calculate the mean of the WFs most similar to the mean
-    TX0 = D['TX'][misfit<2*np.median(misfit)].calcMean()
-    txC, txSigma=TX0.nSigmaMean()
-    TX0.t=TX0.t-txC
-    TX0.tc=0
+def get_tx_est(filename, nShots=np.Inf, TX0=None, source='TX', pMin=50, skip_n_tx=None, skip_make_TX=False):
+    if source is 'TX':
+        # get the transmit pulse mean
+        D=read_ATM_file(filename, nShots=nShots, readTX=True, readRX=False)      
+        TX=D['TX']        
+    if source is 'RX':
+        D=read_ATM_file(filename, nShots=nShots, readRX=True, readTX=False)
+        TX=D['RX']
+    if TX0 is None:
+        # select waveforms that are not clipped and have adequate amplitude
+        valid=np.where((np.nanmax(TX.p,axis=0) < 255) & (np.nanmax(TX.p,axis=0) > pMin) & (D['calrng'] > 5))[0]
+        TX1=TX[valid]
+        t50=TX1.t50()
+        ti=TX1.t.ravel()-np.mean(TX1.t)
+        # align the pulses on their 50% threshold
+        for ii in range(TX1.size):
+            TX1.p[:,ii]=np.interp(ti, TX1.t.ravel()-t50[ii], TX1.p[:,ii])
+        TXm=TX1.calcMean().subBG().normalize()
+        TXn=TX1[np.arange(0, TX1.size, dtype=int)].subBG().normalize()
+        misfit=np.sqrt(np.nanmean((TXn.p-TXm.p)**2, axis=0))
+        
+        # calculate the mean of the WFs most similar to the mean
+        TX0 = TXn[misfit<2*np.median(misfit)].calcMean()
+        txC, txSigma=TX0.nSigmaMean()
+        TX0.t=TX0.t-txC
+        TX0.tc=0
     
     # Prepare the input txdata for fitting
-    txData = D['TX'][0:D['TX'].size]
+    # Use a subsetting operation to copy the data and remove clipped WFs
+    calrng=D['calrng']
+    if skip_n_tx is not None:
+        ind=np.arange(0, TX.size, skip_n_tx, dtype=int)
+        TX=TX[ind]
+        calrng=calrng[ind]        
+    valid=np.where((np.nanmax(TX.p,axis=0) < 255) & (np.nanmax(TX.p,axis=0) > pMin) & (calrng>1))[0]
+    txData = TX[valid]
     txData.t=txData.t-txData.t.mean()
     thresholdMask = txData.p >= 255
     txData.subBG()
@@ -48,18 +67,22 @@ def get_tx_est(filename, nShots=np.Inf):
     txData.nPeaks=np.ones(txData.size)
     
     t_old=time() 
-    deltas = np.arange(-2.5, 2.5, 0.5)
-    sigmas = np.arange(0, 1, 0.25)
+    deltas = np.arange(-2.5, 2.5, 1)
+    sigmas = np.arange(0, 1.5, 0.25)
     # minimize the shifted misfit between each transmit pulse and the waveform mean
     txP=fit_catalog(txData, {0.:TX0}, sigmas, deltas)
     print("     time to fit start pulse=%3.3f" % (time()-t_old))
+    
+    if skip_make_TX is True:
+        return dict(), txP
+    
     # evaluate the fit and find the waveforms that best match the mean transmitted pulse
     RR = txP['R'] / txP['A']
     error_tol=sps.scoreatpercentile(RR, 68)
     all_shifted_TX=list()
     for ii in range(len(txP['R'])):
         temp=np.interp(TX0.t.ravel(), txData.t.ravel() - txP['delta_t'][ii], txData[ii].p.ravel())
-        if RR[ii] < error_tol and txP['A'][ii] < 250: 
+        if RR[ii] < error_tol and txP['A'][ii] < 250 and txP['sigma'][ii] <= sigmas[2]: 
             temp = (temp - txP['B'][ii]) / txP['A'][ii]
             all_shifted_TX.append(temp)
     # put together the shifted transmit pulses that passed muster        
@@ -69,7 +92,7 @@ def get_tx_est(filename, nShots=np.Inf):
     TX.p = np.interp(TX.t.ravel(), TX.t.ravel()-TX.nSigmaMean()[0], TX.p.ravel()).reshape(TX.t.shape)
     TX.tc = np.array(TX.nSigmaMean()[0])
     TX.normalize()
-    return TX
+    return TX, txP
 
 def proc_RX(WF_file, shots, rxData=None, sigmas=np.arange(0, 5, 0.25), deltas=np.arange(-1, 1.5, 0.5), TX=None, countPeaks=True, WF_library=None, TX_file=None, scat_file=None, catalogBuffer=None):
     """
@@ -121,6 +144,10 @@ def main():
     parser.add_argument('--nShots', '-n', type=int, default=np.Inf)
     parser.add_argument('--DOPLOT', '-P', action='store_true')
     parser.add_argument('--IR', '-I', action='store_true')
+    parser.add_argument('--TXfromRX', action='store_true')
+    parser.add_argument('--skipRX', action='store_true', default=False)
+    parser.add_argument('--fitTX', action='store_true')
+    parser.add_argument('--everyNTX', type=int, default=100)
     parser.add_argument('--TXfile', '-T', type=str, default=None)
     parser.add_argument('--waveforms', '-w', action='store_true', default=False)
     args=parser.parse_args()
@@ -141,7 +168,35 @@ def main():
     if args.waveforms:
         out_h5.create_dataset('RX/p', (192, nWFs))
         out_h5.create_dataset('RX/p_fit', (192, nWFs))
-    
+
+    TxP=None
+    # get the transmit pulse
+    if args.TXfile is not None:
+        with h5py.File(args.TXfile,'r') as fh:
+            TX=waveform(np.array(fh['/TX/t']), np.array(fh['/TX/p']) )
+        TX.t -= TX.nSigmaMean()[0]
+        TX.tc = np.array(TX.nSigmaMean()[0])
+        TX.normalize()
+    else:     
+        if args.TXfromRX is False:
+            TX, TxP = get_tx_est(args.input_file, nShots=5000)
+        else:
+            TX, TxP = get_tx_est(args.input_file, source='RX', pMin=150)
+    if args.fitTX:
+        print('fitting the transmit pulse')        
+        dummy, TxP = get_tx_est(args.input_file, source='TX', TX0=TX, skip_make_TX=True, skip_n_tx=args.everyNTX)
+
+    out_h5.create_dataset("TX/t", data=TX.t.ravel())
+    out_h5.create_dataset("TX/p", data=TX.p.ravel())
+
+    if TxP is not None:
+        for field in ['t0','A','R','shot','sigma']:
+            out_h5.create_dataset('/TX/'+field, data=TxP[field])
+
+    if args.skipRX is True:
+        out_h5.close()
+        return
+
     # check whether the scattering file exists
     if args.scat_file is not None:
         scat_file=args.scat_file
@@ -151,16 +206,6 @@ def main():
     if not os.path.isfile(scat_file):
         print("%s does not exist" % scat_file)
         exit()
-
-    # get the transmit pulse
-    if args.TXfile is not None:
-        with h5py.File(args.TXfile,'r') as fh:
-            TX=waveform(np.array(fh['/TX/t']), np.array(fh['/TX/p']) )
-        TX.t -= TX.nSigmaMean()[0]
-        TX.tc = np.array(TX.nSigmaMean()[0])
-        TX.normalize()
-    else:     
-        TX = get_tx_est(args.input_file, nShots=5000)
 
     # make the library of templates
     WF_library = dict()
@@ -228,8 +273,6 @@ def main():
             plt.ylabel('K')
     print("   time to fit RX=%3.2f" % (time()-time_old))
     
-    out_h5.create_dataset("TX/t", data=TX.t.ravel())
-    out_h5.create_dataset("TX/p", data=TX.p.ravel())
     if args.waveforms:
         out_h5.create_dataset('RX/t', data=rxData.t.ravel())
         
