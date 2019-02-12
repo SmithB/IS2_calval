@@ -47,6 +47,66 @@ def integer_shift(p, delta, fill_value=np.NaN):
         result[:] = p
     return result
 
+def golden_section_search(f, x0, delta_x, bnds=[-np.Inf, np.Inf], tol=0.01, max_count=100):
+    """
+    iterative search using the golden-section algorithm (more or less)
+    
+    Search the points in x0 for the minimum value of f, then either broaden the 
+    search range by delta_x, or refine the search spacing around the minumum x.
+    Repeat until the minimum interval between searched values falls below tol
+    If boundaries (bnds) are provided and the search strays outside them, refine
+    the spacing around the nearest boundary until the stopping criterion is reached
+    """
+    # phi is the golden ratio.  
+    phi=(1+np.sqrt(5))/2
+    b=1.-1./phi
+    a=1./phi
+    # if x0 is not a list or an array, wrap it in a list so we can iterate
+    if not hasattr(x0,'__iter__'):
+        x0=[x0]        
+    searched=np.array([])
+    R_dict=dict()
+    it_count=0
+    largest_gap=np.Inf
+    while (len(searched)==0) or (largest_gap > tol):
+        for x in x0:
+            R_dict[x]=f(x)
+            searched=np.union1d(searched, [x])
+        # make a list of R_vals searched
+        R_vals=np.array([R_dict[x] for x in searched])
+        # find the minimum of the R vals
+        iR=np.argmin(R_vals)        
+        # choose the next search point.  If the searched picked the minimum or maximum of the
+        # time offsets, take a step  of delta_x to the left or right
+        if iR==0:
+            x0 = [searched[0] - delta_x]
+            if x0[0] < bnds[0]:
+                # if we're out of bounds, search between the minimum searched value and the left boundary
+                x0=[a*bnds[0]+b*np.min(searched[searched > bnds[0]])]
+            largest_gap=searched[1]-searched[0]
+        elif iR==len(searched)-1:
+            x0 = [searched[-1] + delta_x ]
+            if x0[0] > bnds[1]:
+                x0=[a*bnds[1]+b*np.max(searched[searched < bnds[1]])]
+            largest_gap=searched[-1]-searched[-2]
+        else:
+            # if the minimum was in the interior, find the largest gap in the x values
+            # around the minimum, and add a point using a golden-rule search
+            if searched[iR+1]-searched[iR] > searched[iR]-searched[iR-1]:
+                # the gap to the right of the minimum is largest: put the new point there
+                x0 = [ a*searched[iR] + b*searched[iR+1] ]
+                largest_gap=searched[iR+1]-searched[iR]
+            else:
+                # the gap to the left of the minimum is largest: put the new point there
+                x0 = [ a*searched[iR] + b*searched[iR-1] ]
+                largest_gap=searched[iR]-searched[iR-1]
+        # need to make delta_t a list so that it is iterable
+        it_count+=1
+        if it_count > max_count:
+            print("WARNING: too many shifts")
+            break
+    return searched[iR], R_vals[iR]
+
 def gaussian(x, ctr, sigma):
     """
         return a normalized gaussian kernel centered on 'ctr' with width 'sigma'
@@ -125,56 +185,24 @@ def wf_misfit(delta_t, sigma, WF, catalog, M, key_top,  G=None, return_data_est=
             return R, G.dot(m)
         else:
             return R
-        
+
+    
+    
+
 def fit_shifted(delta_t_list, sigma, catalog, WF, M, key_top,  t_tol=None):
     """
     Find the shift value that minimizes the value between a template and a waveform
     """     
-    R_dict=dict()
     G=np.ones((WF.p.size, 2))
-
     if t_tol is None:
-        t_tol=WF['t_samp']/10.
-        
-    delta_t_spacing=delta_t_list[1]-delta_t_list[0]
-    
-    # first search the (coarse) input values of delta_t.  We will refine based on the best of these
-    delta_t=delta_t_list.copy()
-    delta_t_searched=list()
-    shift_count=0  
-    max_shift=100
-    # search over delta_t
-    while (len(delta_t_searched)==0) or  (np.diff(np.array(delta_t_searched)).min() > t_tol) :       
-        for deltaTval in delta_t:
-            R_dict[deltaTval]=wf_misfit(deltaTval, sigma, WF, catalog, M,  key_top, G=G)
-            bisect.insort(delta_t_searched, deltaTval)
-        # make a list of R_vals searched
-        R_vals=np.array([R_dict[deltaTval] for deltaTval in delta_t_searched])
-        # find the minimum of the R vals
-        iR=np.argmin(R_vals)
-        # choose the next search point.  If the searched picked the minimum or maximum of the
-        # time offsets, take a step  of delta_t_spacing to the left or right
-        if iR==0:
-            delta_t = delta_t_searched[0] - delta_t_spacing
-        elif iR==len(delta_t_searched)-1:
-            delta_t = delta_t_searched[-1] + delta_t_spacing
-        else:
-            # if the minimum was in the interior, find the largest gap in the delta_t values
-            # around the minimum, and add a point using a golden-rule search
-            if delta_t_searched[iR+1]-delta_t_searched[iR] > delta_t_searched[iR]-delta_t_searched[iR-1]:
-                # the gap to the right of the minimum is largest: put the new point there
-                delta_t = 0.62*delta_t_searched[iR] + 0.38*delta_t_searched[iR+1]
-            else:
-                # the gap to the left of the minimum is largest: put the new point there
-                delta_t = 0.62*delta_t_searched[iR] + 0.38*delta_t_searched[iR-1]
-        # need to make delta_t a list so that it is iterable
-        delta_t=[delta_t]
-        shift_count+=1
-        if shift_count > max_shift:
-            print("WARNING: too many shifts for %d" % catalog[key_top].shot)
-    this_key=key_top+[sigma]+[delta_t_searched[iR]]
-    M[key_top+[sigma]]['best']={'key':this_key,'R':R_vals[iR]}
-    return R_vals[iR]
+        t_tol=WF['t_samp']/10.        
+    delta_t_spacing=delta_t_list[1]-delta_t_list[0]   
+    bnds=[np.min(delta_t_list)-5, np.max(delta_t_list)+5]
+    fDelta = lambda deltaTval: wf_misfit(deltaTval, sigma, WF, catalog, M,  key_top, G=G)
+    delta_t_best, R_best = golden_section_search(fDelta, delta_t_list, delta_t_spacing, bnds=bnds, tol=t_tol, max_count=100)
+    this_key=key_top+[sigma]+[delta_t_best]
+    M[key_top+[sigma]]['best']={'key':this_key,'R':R_best}
+    return R_best
 
 def broadened_misfit(delta_ts, sigma, WF, catalog, M, key_top,  t_tol=None):
     """
@@ -193,22 +221,25 @@ def broadened_misfit(delta_ts, sigma, WF, catalog, M, key_top,  t_tol=None):
                 nK=3*np.ceil(sigma/WF.dt)
                 tK=np.arange(-nK, nK+1)*WF.dt
                 K=gaussian(tK, 0, sigma)
+                K=K/np.sum(K)
                 catalog[this_key]=waveform(catalog[key_top].t, np.convolve(catalog[key_top].p.ravel(), K,'same'))         
         return fit_shifted(delta_ts, sigma, catalog, WF,  M, key_top, t_tol=t_tol) 
  
-def fit_broadened(  delta_ts, sigmas, catalog, WF,  M, key_top,  t_tol=None): 
+def fit_broadened(  delta_ts, sigmas, catalog, WF,  M, key_top,  t_tol=None, sigma_last=None): 
     """
     Find the best broadening value that minimizes the misfit between a template and a waveform
     """     
-    R=np.zeros_like(sigmas)
-    for ii, sigma in enumerate(sigmas):         
-        R[ii]=broadened_misfit(delta_ts, sigma, WF, catalog, M, key_top, t_tol=t_tol)
-        if ii>0 and R[ii]>R[ii-1]:
-            break
-    iR=np.argmin(R[0:ii+1])
-    this_key=key_top+[sigmas[iR]]
-    M[key_top]['best']={'key':this_key,'R':R[iR]}
-    return R[iR]
+    fSigma = lambda sigma:broadened_misfit(delta_ts, sigma, WF, catalog, M, key_top, t_tol=t_tol)
+    dSigma=sigmas[1]-sigmas[0]
+    if sigma_last is not None:
+        i1=np.maximum(1, np.argmin(np.abs(sigmas-sigma_last)))
+    else:
+        i1=1
+    sigma_list=[sigmas[0], sigmas[i1]]
+    sigma_best, R_best = golden_section_search(fSigma, sigma_list, dSigma, bnds=[0, sigmas.max()], tol=dSigma/2, max_count=20)
+    this_key=key_top+[sigma_best]
+    M[key_top]['best']={'key':this_key,'R':R_best}
+    return R_best
     
 def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=False, return_catalog=False, catalog=None):
     """
@@ -252,7 +283,7 @@ def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=F
         catalog=listDict()
     keys=np.sort(list(catalog_in))
     fit_params=[WFp_empty.copy() for ii in range(WFs.size)]
-    
+    sigma_last=None
     t_center=WFs.t.mean()
     # loop over input waveforms
     for WF_count in range(WFs.size):
@@ -278,7 +309,7 @@ def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=F
             if [kk] not in M:
                 M[[kk]]=listDict()
             # find the best misfit between this template and the waveform
-            R[ii]=fit_broadened(delta_ts, sigmas, catalog, WF, M, [kk], t_tol=t_tol)
+            R[ii]=fit_broadened(delta_ts, sigmas, catalog, WF, M, [kk], t_tol=t_tol, sigma_last=sigma_last)
             if len(keys) > 1:
                 if ii > 3:
                     iR=np.argsort(R[0:ii+1])
@@ -296,6 +327,7 @@ def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=F
         fit_params[WF_count].update(M[this_key])
         fit_params[WF_count]['delta_t'] -= WF.t0[0]
         fit_params[WF_count]['shot'] = WF.shots[0]
+        sigma_last=M[this_key]['sigma']
         if len(keys) > 1:
             # find the range of K0 vals whose residuals are not significantly different from the optimum
             R_max=fit_params[WF_count]['R']*(1.+1./np.sqrt(WF.t.size))
