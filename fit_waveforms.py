@@ -50,20 +50,20 @@ def integer_shift(p, delta, fill_value=np.NaN):
 def golden_section_search(f, x0, delta_x, bnds=[-np.Inf, np.Inf], tol=0.01, max_count=100):
     """
     iterative search using the golden-section algorithm (more or less)
-    
-    Search the points in x0 for the minimum value of f, then either broaden the 
+
+    Search the points in x0 for the minimum value of f, then either broaden the
     search range by delta_x, or refine the search spacing around the minumum x.
     Repeat until the minimum interval between searched values falls below tol
     If boundaries (bnds) are provided and the search strays outside them, refine
     the spacing around the nearest boundary until the stopping criterion is reached
     """
-    # phi is the golden ratio.  
+    # phi is the golden ratio.
     phi=(1+np.sqrt(5))/2
     b=1.-1./phi
     a=1./phi
     # if x0 is not a list or an array, wrap it in a list so we can iterate
     if not hasattr(x0,'__iter__'):
-        x0=[x0]        
+        x0=[x0]
     searched=np.array([])
     R_dict=dict()
     it_count=0
@@ -75,7 +75,7 @@ def golden_section_search(f, x0, delta_x, bnds=[-np.Inf, np.Inf], tol=0.01, max_
         # make a list of R_vals searched
         R_vals=np.array([R_dict[x] for x in searched])
         # find the minimum of the R vals
-        iR=np.argmin(R_vals)        
+        iR=np.argmin(R_vals)
         # choose the next search point.  If the searched picked the minimum or maximum of the
         # time offsets, take a step  of delta_x to the left or right
         if iR==0:
@@ -113,10 +113,21 @@ def gaussian(x, ctr, sigma):
     """
     return 1/(sigma*np.sqrt(2*np.pi))*np.exp(-(x-ctr)**2/2/sigma**2)
 
+def amp_misfit(x, y, els=None, A=None):
+    if els is None:
+        ii=np.isfinite(x) & np.isfinite(y)
+    else:
+        ii=els
+    if A is None:
+        A=np.sum(x[ii]*y[ii])/np.sum(x[ii]*x[ii])
+    r=y[ii]-x[ii]*A
+    R=np.sum((r**2)/(ii.sum()-2))
+    return R, A, ii
+
 def lin_fit_misfit(x, y, G=None, m=None, Ginv=None, good_old=None):
     """
     Calculate the best-fitting background + scaled waveform model, return its
-    misfit 
+    misfit
     """
     if G is None:
         G=np.ones((x.size, 2))
@@ -126,7 +137,7 @@ def lin_fit_misfit(x, y, G=None, m=None, Ginv=None, good_old=None):
         # use the previously calculated version of Ginv
         m=Ginv.dot(y[good])
         R=R=np.sqrt(np.sum((y[good]-G[good,:].dot(m))**2.)/(good.sum()-2))
-    else:    
+    else:
         # need at least three good values to calculate a misfit
         if good.sum() < 3:
             m=np.zeros(2)
@@ -144,15 +155,15 @@ def lin_fit_misfit(x, y, G=None, m=None, Ginv=None, good_old=None):
             R=np.sqrt(np.sum(y**2.)/(y.size-2))
     return R, m, Ginv, good
 
-def wf_misfit(delta_t, sigma, WF, catalog, M, key_top,  G=None, return_data_est=False):
-    """    
+def wf_misfit(delta_t, sigma, WF, catalog, M, key_top,  G=None, return_data_est=False, fit_BG=False):
+    """
         Find the misfit between a scaled and shifted template and a waveform
     """
     if G is None:
         G=np.ones((WF.p.size, 2))
     this_key=key_top+[sigma]+[delta_t]
     if (this_key in M) and (return_data_est is False):
-        return M[this_key]['R']     
+        return M[this_key]['R']
     else:
         # check if the broadened but unshifted version of this key is in the catalog
         broadened_key=key_top+[sigma]
@@ -175,28 +186,35 @@ def wf_misfit(delta_t, sigma, WF, catalog, M, key_top,  G=None, return_data_est=
                    tc=catalog[broadened_key].tc, t0=catalog[broadened_key].t0)
             catalog[this_key].params['Ginv']=None
             catalog[this_key].params['good']=None
-        R, m, Ginv, good = lin_fit_misfit(catalog[this_key].p, WF.p, G=G,\
-            Ginv=catalog[this_key].params['Ginv'], good_old=catalog[this_key].params['good'])
-        catalog[this_key].params['Ginv']=Ginv
-        catalog[this_key].params['good']=good
-        M[this_key] = {'K0':key_top[0], 'R':R, 'A':np.float64(m[0]), 'B':np.float64(m[1]), 'delta_t':delta_t, 'sigma':sigma}  
-        
+        if fit_BG is True:
+            R, m, Ginv, good = lin_fit_misfit(catalog[this_key].p, WF.p, G=G,\
+                Ginv=catalog[this_key].params['Ginv'], good_old=catalog[this_key].params['good'])
+            catalog[this_key].params['Ginv']=Ginv
+            catalog[this_key].params['good']=good
+            M[this_key] = {'K0':key_top[0], 'R':R, 'A':np.float64(m[0]), 'B':np.float64(m[1]), 'delta_t':delta_t, 'sigma':sigma}
+        else:
+            G=catalog[this_key].p
+            ii=np.where(G>0.002)[0][0]
+            good=np.isfinite(G) & np.isfinite(WF.p)
+            good[0:ii]=0
+            R, m, good = amp_misfit(G, WF.p, els=good)
+            M[this_key] = {'K0':key_top[0], 'R':R, 'A':m, 'B':0., 'delta_t':delta_t, 'sigma':sigma}
         if return_data_est:
             return R, G.dot(m)
         else:
             return R
 
-    
-    
+
+
 
 def fit_shifted(delta_t_list, sigma, catalog, WF, M, key_top,  t_tol=None):
     """
     Find the shift value that minimizes the value between a template and a waveform
-    """     
+    """
     G=np.ones((WF.p.size, 2))
     if t_tol is None:
-        t_tol=WF['t_samp']/10.        
-    delta_t_spacing=delta_t_list[1]-delta_t_list[0]   
+        t_tol=WF['t_samp']/10.
+    delta_t_spacing=delta_t_list[1]-delta_t_list[0]
     bnds=[np.min(delta_t_list)-5, np.max(delta_t_list)+5]
     fDelta = lambda deltaTval: wf_misfit(deltaTval, sigma, WF, catalog, M,  key_top, G=G)
     delta_t_best, R_best = golden_section_search(fDelta, delta_t_list, delta_t_spacing, bnds=bnds, tol=t_tol, max_count=100)
@@ -206,7 +224,7 @@ def fit_shifted(delta_t_list, sigma, catalog, WF, M, key_top,  t_tol=None):
 
 def broadened_misfit(delta_ts, sigma, WF, catalog, M, key_top,  t_tol=None):
     """
-    Calculate the misfit between a broadened template and a waveform (searching over a range of shifts) 
+    Calculate the misfit between a broadened template and a waveform (searching over a range of shifts)
     """
     this_key=key_top+[sigma]
     if this_key in M:
@@ -217,18 +235,18 @@ def broadened_misfit(delta_ts, sigma, WF, catalog, M, key_top,  t_tol=None):
             # if we haven't already broadened the WF to sigma, try it now:
             if sigma==0:
                 catalog[this_key]=waveform(catalog[key_top].t, catalog[key_top].p, t0=catalog[key_top].t0, tc=catalog[key_top].tc)
-            else:    
+            else:
                 nK=3*np.ceil(sigma/WF.dt)
                 tK=np.arange(-nK, nK+1)*WF.dt
                 K=gaussian(tK, 0, sigma)
                 K=K/np.sum(K)
-                catalog[this_key]=waveform(catalog[key_top].t, np.convolve(catalog[key_top].p.ravel(), K,'same'))         
-        return fit_shifted(delta_ts, sigma, catalog, WF,  M, key_top, t_tol=t_tol) 
- 
-def fit_broadened(  delta_ts, sigmas, catalog, WF,  M, key_top,  t_tol=None, sigma_last=None): 
+                catalog[this_key]=waveform(catalog[key_top].t, np.convolve(catalog[key_top].p.ravel(), K,'same'))
+        return fit_shifted(delta_ts, sigma, catalog, WF,  M, key_top, t_tol=t_tol)
+
+def fit_broadened(  delta_ts, sigmas, catalog, WF,  M, key_top,  t_tol=None, sigma_last=None):
     """
     Find the best broadening value that minimizes the misfit between a template and a waveform
-    """     
+    """
     fSigma = lambda sigma:broadened_misfit(delta_ts, sigma, WF, catalog, M, key_top, t_tol=t_tol)
     dSigma=sigmas[1]-sigmas[0]
     if sigma_last is not None:
@@ -240,24 +258,24 @@ def fit_broadened(  delta_ts, sigmas, catalog, WF,  M, key_top,  t_tol=None, sig
     this_key=key_top+[sigma_best]
     M[key_top]['best']={'key':this_key,'R':R_best}
     return R_best
-    
+
 def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=False, return_catalog=False, catalog=None):
     """
     Search a library of waveforms for the best match between the broadened, shifted library waveform
     and the target waveforms
-    
+
     Inputs:
         WFs: a waveform object, whose fields include:
             't': the waveform's time vector
             'p': the power samples of the waveform
             'tc': a relative time relative to which the waveform's time is shifted
         catalog_in: A dictionary containing waveform objects that will be broadened and
-                    shifted to match the waveforms in 'WFs'                     
+                    shifted to match the waveforms in 'WFs'
         sigmas: a list of spread values that will be searched for each template and waveform
                 The search over sigmas terminates when a minimum is found
         delta_ts: a list of time-shift values that will be searched for each template and
-                waveform.  All of these will be searched, then the results will be refined 
-                to a tolerance of t_tol        
+                waveform.  All of these will be searched, then the results will be refined
+                to a tolerance of t_tol
         keyword arguments:
             return_data_est:  set to 'true' if the algorithm should return the best-matching
                 shifted and broadened template for each input
@@ -267,17 +285,17 @@ def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=F
             delta_t: the time-shift required to align the template and measured waveforms
             sigma: the broadening applied to the measured waveform
             k0: the key into the waveform catalog for the best-fitting waveform
-    
+
     """
     # set a sensible tolerance for delta_t if none is specified
     if t_tol is None:
         t_tol=WFs.dt*0.1
-    
+
     # make an empty output_dictionary
     WFp_empty={f:np.NaN for f in ['K0','R','A','B','delta_t','sigma','t0','Kmin','Kmax','shot']}
     if return_data_est:
         WFp_empty['wf_est']=np.zeros_like(WFs.t)+np.NaN
-    
+
     # make an empty container where we will keep waveforms we've tried already
     if catalog is None:
         catalog=listDict()
@@ -294,7 +312,7 @@ def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=F
         delta_samp=np.round((WF.tc-t_center)/WF.dt)
         WF.p=integer_shift(WF.p, -delta_samp)
         WF.t0=-delta_samp*WF.dt
-        
+
         # set up a matching dictionary (contains keys of waveforms and their misfits)
         M=listDict()
         # loop over the library of templates
@@ -323,7 +341,7 @@ def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=F
         # will not have a 'best' entry
         while 'best' in M[this_key]:
             this_key=M[this_key]['best']['key']
-        # write out the best model information 
+        # write out the best model information
         fit_params[WF_count].update(M[this_key])
         fit_params[WF_count]['delta_t'] -= WF.t0[0]
         fit_params[WF_count]['shot'] = WF.shots[0]
@@ -341,23 +359,22 @@ def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=F
             R0, wf_est=wf_misfit(fit_params[WF_count]['delta_t'], fit_params[WF_count]['sigma'], WFs[WF_count], catalog, M, [this_key[0]], return_data_est=True)
             fit_params[WF_count]['wf_est']=wf_est#integer_shift(wf_est, -delta_samp)
         if DOPLOT:
-            plt.figure(); 
+            plt.figure();
             plt.plot(WF.t, integer_shift(WF.p, delta_samp),'k.')
             plt.plot(WF.t, wf_est,'r')
             plt.title('K=%f, dt=%f, sigma=%f, R=%f' % (this_key[0], fit_params[WF_count]['delta_t'], fit_params[WF_count]['sigma'], fit_params[WF_count]['R']))
             print(WF_count)
         if np.mod(WF_count, 1000)==0 and WF_count > 0:
             print('    N=%d, N_keys=%d' % (WF_count, len(list(catalog))))
-    
+
     result=dict()
     for key in WFp_empty:
-        if key is 'wf_est':
+        if key in ['wf_est']:
             result[key]=np.concatenate( [ ii['wf_est'] for ii in fit_params ], axis=1 )
         else:
             result[key]=np.array([ii[key] for ii in fit_params]).ravel()
-    
+
     if return_catalog:
         return result, catalog
     else:
         return result
- 
