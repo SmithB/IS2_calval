@@ -58,7 +58,7 @@ def read_ATM_file(fname, getCountAndReturn=False, shot0=0, nShots=np.Inf, readTX
                     '/waveforms/twv/gate/pulse/count'):
             D_in[key]=np.array(h5f[key], dtype=int)
         # read in the gate info for the shots we want to read    
-        for key in( '/waveforms/twv/shot/gate_start', '/waveforms/twv/shot/gate_count', '/laser/gate_xmt', '/laser/gate_rcv'):
+        for key in( '/waveforms/twv/shot/gate_start', '/waveforms/twv/shot/gate_count', '/laser/gate_xmt', '/laser/gate_rcv', '/laser/calrng'):
             D_in[key]=np.array(h5f[key][shot0:shotN], dtype=int)
             
         #read in the geolocation
@@ -105,6 +105,8 @@ def read_ATM_file(fname, getCountAndReturn=False, shot0=0, nShots=np.Inf, readTX
             result={ 'az':D_in['/laser/scan_azimuth'],'dt':dt, 'elevation':D_in['footprint/elevation'], 'latitude':D_in['footprint/latitude'],'longitude':D_in['footprint/longitude']}
         except KeyError:
             result={}
+        result['calrng']=D_in['/laser/calrng']
+
         if readTX:
             TX=np.c_[TX].transpose() 
             result['TX']=waveform(np.arange(TX.shape[0])*dt, TX, shots=shots)
