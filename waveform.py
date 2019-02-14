@@ -147,12 +147,31 @@ class waveform(object):
         for col in np.arange(self.size):
             p=self.p[:,col]
             p50=np.nanmax(p)/2
-            i50=np.argwhere(p>p50)[0]
+            i50=np.where(p>p50)[0][0]
             dp=(p50 - p[i50-1]) / (p[i50] - p[i50-1])
             t50[col] = self.t[i50-1] + dp*self.dt
         return t50
 
+    def fwhm(self):
+        FWHM=np.zeros(self.size)
+        for col in np.arange(self.size):
+            p=self.p[:,col]
+            p50=np.nanmax(p)/2
+            # find the elements that have power values greater than 50% of the max
+            ii=np.where(p>p50)[0]
+            i50=ii[0]
+            # linear interpolation between the first p>50 value and the last p<50
+            dp=(p50 - p[i50-1]) / (p[i50] - p[i50-1])
+            temp = self.t[i50-1] + dp*self.dt
+            # linear interpolation between the last p>50 value and the next value
+            i50=ii[-1]+1
+            dp=(p50 - p[i50-1]) / (p[i50] - p[i50-1])
+            FWHM[col] = self.t[i50-1] + dp*self.dt - temp            
+        return FWHM
+    
     def calcMean(self, threshold=255):
         good=np.sum( (~np.isfinite(self.p)) & (self.p < threshold), axis=0) < 2
-        return waveform(self.t, self[good].normalize().p.mean(axis=1))
+        return waveform(self.t, np.nanmean(self[good].normalize().p, axis=1))
+       
+      
 
