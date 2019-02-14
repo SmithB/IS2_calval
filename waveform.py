@@ -16,7 +16,7 @@ def gaussian(x, ctr, sigma):
 class waveform(object):
     __slots__=['p','t','t0', 'dt', 'tc', 'size', 'nSamps', 'nPeaks','shots','params']
     def __init__(self, t, p, t0=0, tc=0, nPeaks=1, shots=np.NaN):
-        
+
         self.t=t
         self.t.shape=[t.size,1]
         self.dt=t[1]-t[0]
@@ -26,22 +26,22 @@ class waveform(object):
         self.size=self.p.shape[1]
         self.nSamps=self.p.shape[0]
         self.params=dict()
-        
+
         kw_dict={'t0':t0, 'tc':tc, 'nPeaks':nPeaks,'shots':shots}
         for key, val in kw_dict.items():
             if ~hasattr(val,'__len__') or val.size < self.size:
                 setattr(self, key, np.zeros(self.size, dtype=np.array(val).dtype)+val)
             else:
                 setattr(self, key, val)
-    
+
     def __getitem__(self, key):
         return waveform(self.t, self.p[:,key], t0=self.t0[key], tc=self.tc[key], nPeaks=self.nPeaks[key],shots=self.shots[key])
-            
+
     def centroid(self, els=None, threshold=None):
         """
         Calculate the centroid of a distribution, optionally for the subset specified by "els"
         """
-        if els is not None: 
+        if els is not None:
             return np.sum(self.t[els]*self.p[els])/self.p[els].sum()
         if threshold is not None:
             p=self.p.copy()
@@ -59,25 +59,25 @@ class waveform(object):
         if C is None:
             C=self.centroid(els)
         return np.sqrt(np.sum(((self.t[els]-C)**2)*self.p[els])/self.p[els].sum())
-    
+
     def percentile(self, P, els=None):
         """
         Calculate the specified percentiles of a distribution,  optionally for the subset specified by "els"
         """
         if els is not None:
             C=np.cumsum(self.p[els])
-            return np.interp(P, C/C[-1], self.t[els]) 
+            return np.interp(P, C/C[-1], self.t[els])
         else:
             C=np.cumsum(self.p)
-            return np.interp(P, C/C[-1], self.t) 
-    
+            return np.interp(P, C/C[-1], self.t)
+
     def robust_spread(self, els=None):
         """
         Calculate half the difference bewteen the 16th and 84th percentiles of a distribution
         """
         lowHigh=self.percentile(np.array([0.16, 0.84]), els=els)
         return (lowHigh[1]-lowHigh[0])/2.
-        
+
     def count_peaks(self, threshold=0.25, W=3, return_indices=False):
         K=gaussian(np.arange(-4*W, 4*W+1), 0, W)
         N=np.zeros(self.size)
@@ -93,8 +93,8 @@ class waveform(object):
             return N, peak_list
         else:
             return N
-            
-    
+
+
     def nSigmaMean(self, N=3, els=None, tol=None, maxCount=20):
         """
             Calculate the iterative N-sigma edit, using the robust spread to measure sigma
@@ -106,7 +106,7 @@ class waveform(object):
         else:
             els = els & (self.p > 0)
         t_last=self.t[0]
-        tc=self.centroid(els)  
+        tc=self.centroid(els)
         sigma=self.robust_spread( els)
         count=0
         while (np.abs(t_last-tc) > tol) and (count<maxCount):
@@ -117,16 +117,31 @@ class waveform(object):
             sigma=self.robust_spread(els=these)
         return tc, sigma
 
-    def subBG(self, bg_samps=np.arange(0,30, dtype=int)):
-        bgEst=np.nanmean(self.p[bg_samps, :], axis=0)
+    def subBG(self, bg_samps=np.arange(0,30, dtype=int), t50_minus=None):
+        """ subtract a background estimate from each trace
+
+        For each individual waveform, calculate an estimate of the bacground estimate.
+        Two options allowed are:
+            -specify samples with bg_samps (default = first 30 samples of the trace)
+            -specify t50_minus: samples earlier than the trace's t50() minus
+                t50_minus are used in the background calculation
+        """
+        if t50_minus is not None:
+            t50=self.t50()
+            bgEst=np.zeros(self.size)
+            for ii in range(self.size):
+                bgind=np.where(self.t < t50[ii]-t50_minus)[0]
+                bgEst[ii]=np.nanmean(self.p[bgind, ii])
+        else:
+            bgEst=np.nanmean(self.p[bg_samps, :], axis=0)
         self.p=self.p-bgEst
         return self
-    
+
     def normalize(self):
         self.subBG()
         self.p=self.p/np.nanmax(self.p, axis=0)
         return self
-    
+
     def t50(self):
         t50=np.zeros(self.size)
         for col in np.arange(self.size):
@@ -136,9 +151,8 @@ class waveform(object):
             dp=(p50 - p[i50-1]) / (p[i50] - p[i50-1])
             t50[col] = self.t[i50-1] + dp*self.dt
         return t50
-        
+
     def calcMean(self, threshold=255):
         good=np.sum( (~np.isfinite(self.p)) & (self.p < threshold), axis=0) < 2
         return waveform(self.t, self[good].normalize().p.mean(axis=1))
-        
-        
+
