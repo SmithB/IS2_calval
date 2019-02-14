@@ -10,7 +10,7 @@ Created on Wed Sep  5 13:36:08 2018
 
 @author: ben
 """
-from ATL11.geo_index import geo_index, index_list_for_files, unique_points
+from PointDatabase.geo_index import geo_index, index_list_for_files, unique_points
 from ATL11.RDE import RDE
 import matplotlib.pyplot as plt
 from osgeo import osr
@@ -19,8 +19,8 @@ import h5py
 import os
 import sys
 from ATL11.pt_blockmedian import pt_blockmedian
-from ATL11.ATL06_data import ATL06_data
-from IS2_calval.qfit_data import Qfit_data
+from PointDatabase.ATL06_data import ATL06_data
+from PointDatabase.qfit_data import Qfit_data
 
 import matplotlib.pyplot as plt
 DOPLOT=False
@@ -75,7 +75,11 @@ ATL06_field_dict={None:['delta_time','h_li','h_li_sigma','latitude','longitude',
             'ground_track':['x_atc', 'y_atc','seg_azimuth','sigma_geo_at','sigma_geo_xt'],
             'fit_statistics':['dh_fit_dx','dh_fit_dx_sigma','dh_fit_dy','h_rms_misfit','h_robust_sprd','n_fit_photons','w_surface_window_final','snr_significance'],
             'orbit_info':['rgt']}
-
+ATL06_fields=list()
+for key in ATL06_field_dict:   
+    ATL06_fields+=ATL06_field_dict[key]
+            
+Qfit_fields = ['latitude', 'longitude', 'elevation', 'seconds_of_day', 'days_J2K']
 ps_srs=osr.SpatialReference()
 ps_srs.ImportFromProj4(SRS_proj4)
 ll_srs=osr.SpatialReference()
@@ -109,7 +113,7 @@ for bin_name in D6_GI.keys():
     print(bin_name)
     bin_xy=[int(coord) for coord in bin_name.split('_')]
     # query the Qfit index to get all the data for the current bin
-    Qlist=Q_GI.query_xy([[bin_xy[0]], [bin_xy[1]]], pad=6, get_data=True, strict=True)
+    Qlist=Q_GI.query_xy([[bin_xy[0]], [bin_xy[1]]], pad=6, get_data=True, strict=True, fields=Qfit_fields)
     Qsub=Qfit_data(waveform_format=True).from_list(Qlist).get_xy(SRS_proj4)
     Qsub=blockmedian_for_qsub(Qsub, 5)
     # the geo index works much better (more selective) if the Qfit data are sorted by geobin
@@ -121,9 +125,13 @@ for bin_name in D6_GI.keys():
     GI_Qsub=geo_index(delta=[100, 100]).from_xy([Qsub.x, Qsub.y])
     
     # query ATL06 for the current bin, and index it
-    D6list=D6_GI.query_xy([[bin_xy[0]], [bin_xy[1]]], get_data=True, fields=ATL06_field_dict)
+    
+    D6list=D6_GI.query_xy([[bin_xy[0]], [bin_xy[1]]], get_data=True, fields=ATL06_fields)
+    if not isinstance(D6list, list):
+        D6list=[D6list]
     for item in D6list:
         item.BP=np.zeros_like(item.latitude)+item.beam_pair
+        item.rgt=np.zeros_like(item.latitude)+item.rgt
         item.list_of_fields.append('BP')
         
     KK=ATL06_field_dict.copy()
