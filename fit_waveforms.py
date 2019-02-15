@@ -47,7 +47,7 @@ def integer_shift(p, delta, fill_value=np.NaN):
         result[:] = p
     return result
 
-def golden_section_search(f, x0, delta_x, bnds=[-np.Inf, np.Inf], tol=0.01, max_count=100):
+def golden_section_search(f, x0, delta_x, bnds=[-np.Inf, np.Inf], integer_steps=False, tol=0.01, max_count=100):
     """
     iterative search using the golden-section algorithm (more or less)
 
@@ -58,7 +58,10 @@ def golden_section_search(f, x0, delta_x, bnds=[-np.Inf, np.Inf], tol=0.01, max_
     the spacing around the nearest boundary until the stopping criterion is reached
     """
     # phi is the golden ratio.
-    phi=(1+np.sqrt(5))/2
+    if integer_steps is False:
+        phi=(1+np.sqrt(5))/2
+    else:
+        phi=2   
     b=1.-1./phi
     a=1./phi
     # if x0 is not a list or an array, wrap it in a list so we can iterate
@@ -100,6 +103,8 @@ def golden_section_search(f, x0, delta_x, bnds=[-np.Inf, np.Inf], tol=0.01, max_
                 # the gap to the left of the minimum is largest: put the new point there
                 x0 = [ a*searched[iR] + b*searched[iR-1] ]
                 largest_gap=searched[iR]-searched[iR-1]
+        if integer_steps is True:
+            x0=np.round(x0).astype(int)
         # need to make delta_t a list so that it is iterable
         it_count+=1
         if it_count > max_count:
@@ -247,6 +252,8 @@ def fit_broadened(  delta_ts, sigmas, catalog, WF,  M, key_top,  t_tol=None, sig
     """
     Find the best broadening value that minimizes the misfit between a template and a waveform
     """
+    if key_top not in M:
+        M[key_top]=listDict()
     fSigma = lambda sigma:broadened_misfit(delta_ts, sigma, WF, catalog, M, key_top, t_tol=t_tol)
     dSigma=sigmas[1]-sigmas[0]
     if sigma_last is not None:
@@ -312,11 +319,11 @@ def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=F
         delta_samp=np.round((WF.tc-t_center)/WF.dt)
         WF.p=integer_shift(WF.p, -delta_samp)
         WF.t0=-delta_samp*WF.dt
-
+ 
         # set up a matching dictionary (contains keys of waveforms and their misfits)
         M=listDict()
+     
         # loop over the library of templates
-        R=np.zeros(len(keys))
         for ii, kk in enumerate(keys):
             # check if we've searched this template before, otherwise copy it into
             # the library of checked templates
@@ -324,19 +331,19 @@ def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=F
                 # make a copy of the current template
                 temp=catalog_in[kk]
                 catalog[[kk]]=waveform(temp.t, temp.p, t0=temp.t0, tc=temp.tc)
-            if [kk] not in M:
-                M[[kk]]=listDict()
-            # find the best misfit between this template and the waveform
-            R[ii]=fit_broadened(delta_ts, sigmas, catalog, WF, M, [kk], t_tol=t_tol, sigma_last=sigma_last)
-            if len(keys) > 1:
-                if ii > 3:
-                    iR=np.argsort(R[0:ii+1])
-                    if np.any(R[iR] > R[iR][0]*(1+2/np.sqrt(WF.t.size))) and iR[0] < ii:
-                        break
-        R=R[0:ii+1]
-        iR=np.argsort(R)
-        this_key=[keys[iR[0]]]
-        M['best']={'key':this_key, 'R':R[iR[0]]}
+        if len(keys)>1:            
+             # find the best misfit between this template and the waveform
+            fB=lambda ind: fit_broadened(delta_ts, sigmas, catalog, WF, M, [keys[ind]], t_tol=t_tol, sigma_last=sigma_last)
+            iBest, Rbest = golden_section_search(fB, [1, 3], delta_x=1, bnds=[0, len(keys)-1], integer_steps=True, tol=1)
+            iBest=int(iBest)             
+        else:
+            Rbest=fit_broadened(delta_ts, sigmas, catalog, WF, M, [keys[0]], t_tol=t_tol, sigma_last=sigma_last)
+            iBest=0
+        this_key=[keys[iBest]]    
+        M['best']={'key':this_key, 'R':Rbest}        
+        searched_keys = np.array([this_key for this_key in keys if [this_key] in M])
+        R=np.array([M[[ki]]['best']['R'] for ki in searched_keys])
+          
         # recursively traverse the M dict for the best match.  The lowest-level match
         # will not have a 'best' entry
         while 'best' in M[this_key]:
@@ -346,12 +353,19 @@ def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=F
         fit_params[WF_count]['delta_t'] -= WF.t0[0]
         fit_params[WF_count]['shot'] = WF.shots[0]
         sigma_last=M[this_key]['sigma']
-        if len(keys) > 1:
-            # find the range of K0 vals whose residuals are not significantly different from the optimum
-            R_max=fit_params[WF_count]['R']*(1.+1./np.sqrt(WF.t.size))
-            kVals=keys[np.where(R<=R_max)[0]]
-            fit_params[WF_count]['Kmin']=kVals.min()
-            fit_params[WF_count]['Kmax']=kVals.max()
+        R_max=fit_params[WF_count]['R']*(1.+1./np.sqrt(WF.t.size))
+        if np.sum(searched_keys>0)>=3:
+            these=searched_keys>0
+            E_roots=np.polynomial.polynomial.Polynomial.fit(np.log10(searched_keys[these]), R[these]-R_max, 2).roots()
+            if np.any(np.imag(E_roots)!=0):
+                fit_params[WF_count]['Kmax']=10**np.polynomial.polynomial.Polynomial.fit(np.log10(searched_keys[these]), R[these]-R_max, 1).roots()[0]
+                fit_params[WF_count]['Kmin']=np.min(searched_keys[R<R_max])
+            else:
+                fit_params[WF_count]['Kmin']=10**np.min(E_roots)
+                fit_params[WF_count]['Kmax']=10**np.max(E_roots)
+        if (0. in searched_keys) and R[searched_keys==0]<R_max:
+            fit_params[WF_count]['Kmin']=0.
+            
         #print(this_key+[R[iR][0]])
         if return_data_est or DOPLOT:
             #             wf_misfit(delta_t, sigma, WF, catalog, M, key_top, G=None, return_data_est=False):

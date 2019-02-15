@@ -5,7 +5,7 @@ Created on Wed Nov 14 21:51:42 2018
 
 @author: ben
 """
-
+#  --startShot 283000
 import numpy as np
 import matplotlib.pyplot as plt
 from IS2_calval.read_ATM_wfs import read_ATM_file
@@ -234,9 +234,10 @@ def main():
 
     for shot0 in start_vals:
         shots=np.arange(shot0, np.minimum(shot0+blocksize, lastShot))
+        tic=time()
         D_out, rxData, D, catalogBuffer=proc_RX(args.input_file, shots, sigmas=sigmas, deltas=deltas,\
              TX=TX, WF_library=WF_library, catalogBuffer=catalogBuffer, countPeaks=countPeaks)
-
+        delta_time=time()-tic
         N_out=D_out['shot'].size
         outShot0=shot0-args.startShot
         for key in outDS:
@@ -253,7 +254,7 @@ def main():
             out_h5['RX/p_fit'][:, outShot0:outShot0+N_out] = D_out['wf_est']
             out_h5['RX/p'][:, outShot0:outShot0+N_out] = rxData.p
 
-        print("  shot=%d out of %d, N_keys=%d" % (shot0+blocksize, start_vals[-1]+blocksize, len(catalogBuffer.keys())))
+        print("  shot=%d out of %d, N_keys=%d, dt=%5.1f" % (shot0+blocksize, start_vals[-1]+blocksize, len(catalogBuffer.keys()), delta_time))
         if args.DOPLOT:
             plt.figure();
             plt.subplot(511)
