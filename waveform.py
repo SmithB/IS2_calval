@@ -107,7 +107,7 @@ class waveform(object):
             els = els & (self.p > 0)
         t_last=self.t[0]
         tc=self.centroid(els)
-        sigma=self.robust_spread( els)
+        sigma=self.robust_spread(els)
         count=0
         while (np.abs(t_last-tc) > tol) and (count<maxCount):
             count+=1
@@ -131,7 +131,8 @@ class waveform(object):
             bgEst=np.zeros(self.size)
             for ii in range(self.size):
                 bgind=np.where(self.t < t50[ii]-t50_minus)[0]
-                bgEst[ii]=np.nanmean(self.p[bgind, ii])
+                if len(bgind) > 1:
+                    bgEst[ii]=np.nanmean(self.p[bgind, ii])
         else:
             bgEst=np.nanmean(self.p[bg_samps, :], axis=0)
         self.p=self.p-bgEst
