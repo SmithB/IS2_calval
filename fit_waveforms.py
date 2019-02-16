@@ -78,7 +78,10 @@ def golden_section_search(f, x0, delta_x, bnds=[-np.Inf, np.Inf], integer_steps=
         # make a list of R_vals searched
         R_vals=np.array([R_dict[x] for x in searched])
         # find the minimum of the R vals
-        iR=np.argmin(R_vals)
+        try:
+            iR=np.argmin(R_vals)
+        except TypeError:
+            print("HERE!")
         # choose the next search point.  If the searched picked the minimum or maximum of the
         # time offsets, take a step  of delta_x to the left or right
         if iR==0:
@@ -86,12 +89,16 @@ def golden_section_search(f, x0, delta_x, bnds=[-np.Inf, np.Inf], integer_steps=
             if x0[0] < bnds[0]:
                 # if we're out of bounds, search between the minimum searched value and the left boundary
                 x0=[a*bnds[0]+b*np.min(searched[searched > bnds[0]])]
-            largest_gap=searched[1]-searched[0]
+                largest_gap=searched[1]-searched[0]
+            else:
+                largest_gap=np.Inf
         elif iR==len(searched)-1:
             x0 = [searched[-1] + delta_x ]
             if x0[0] > bnds[1]:
                 x0=[a*bnds[1]+b*np.max(searched[searched < bnds[1]])]
-            largest_gap=searched[-1]-searched[-2]
+                largest_gap=searched[-1]-searched[-2]
+            else:
+                largest_gap=np.Inf
         else:
             # if the minimum was in the interior, find the largest gap in the x values
             # around the minimum, and add a point using a golden-rule search
@@ -104,7 +111,12 @@ def golden_section_search(f, x0, delta_x, bnds=[-np.Inf, np.Inf], integer_steps=
                 x0 = [ a*searched[iR] + b*searched[iR-1] ]
                 largest_gap=searched[iR]-searched[iR-1]
         if integer_steps is True:
-            x0=np.round(x0).astype(int)
+            if np.floor(x0) not in searched:
+                x0=np.floor(x0).astype(int) 
+            elif np.ceil(x0) not in searched:
+                x0=np.ceil(x0).astype(int)
+            else:
+                break
         # need to make delta_t a list so that it is iterable
         it_count+=1
         if it_count > max_count:
@@ -201,16 +213,13 @@ def wf_misfit(delta_t, sigma, WF, catalog, M, key_top,  G=None, return_data_est=
             G=catalog[this_key].p
             ii=np.where(G>0.002)[0][0]
             good=np.isfinite(G) & np.isfinite(WF.p)
-            good[0:ii]=0
+            good[0:np.maximum(0,ii-4)]=0
             R, m, good = amp_misfit(G, WF.p, els=good)
             M[this_key] = {'K0':key_top[0], 'R':R, 'A':m, 'B':0., 'delta_t':delta_t, 'sigma':sigma}
         if return_data_est:
             return R, G.dot(m)
         else:
             return R
-
-
-
 
 def fit_shifted(delta_t_list, sigma, catalog, WF, M, key_top,  t_tol=None):
     """
@@ -232,8 +241,8 @@ def broadened_misfit(delta_ts, sigma, WF, catalog, M, key_top,  t_tol=None):
     Calculate the misfit between a broadened template and a waveform (searching over a range of shifts)
     """
     this_key=key_top+[sigma]
-    if this_key in M:
-        return M[this_key]
+    if (this_key in M) and ('best' in M[this_key]):
+        return M[this_key]['best']['R']
     else:
         M[this_key]=listDict()
         if this_key not in catalog:
@@ -334,7 +343,7 @@ def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=F
         if len(keys)>1:            
              # find the best misfit between this template and the waveform
             fB=lambda ind: fit_broadened(delta_ts, sigmas, catalog, WF, M, [keys[ind]], t_tol=t_tol, sigma_last=sigma_last)
-            iBest, Rbest = golden_section_search(fB, [1, 3], delta_x=1, bnds=[0, len(keys)-1], integer_steps=True, tol=1)
+            iBest, Rbest = golden_section_search(fB, [2, 4], delta_x=2, bnds=[0, len(keys)-1], integer_steps=True, tol=1)
             iBest=int(iBest)             
         else:
             Rbest=fit_broadened(delta_ts, sigmas, catalog, WF, M, [keys[0]], t_tol=t_tol, sigma_last=sigma_last)
@@ -355,10 +364,13 @@ def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=F
         sigma_last=M[this_key]['sigma']
         R_max=fit_params[WF_count]['R']*(1.+1./np.sqrt(WF.t.size))
         if np.sum(searched_keys>0)>=3:
-            these=searched_keys>0
+            these=np.where(searched_keys>0)[0]
+            if len(these) > 3:
+                 ind_keys=np.argsort(R[these])
+                 these=these[ind_keys[0:4]]
             E_roots=np.polynomial.polynomial.Polynomial.fit(np.log10(searched_keys[these]), R[these]-R_max, 2).roots()
             if np.any(np.imag(E_roots)!=0):
-                fit_params[WF_count]['Kmax']=10**np.polynomial.polynomial.Polynomial.fit(np.log10(searched_keys[these]), R[these]-R_max, 1).roots()[0]
+                fit_params[WF_count]['Kmax']=10**np.minimum(3,np.polynomial.polynomial.Polynomial.fit(np.log10(searched_keys[these]), R[these]-R_max, 1).roots()[0])
                 fit_params[WF_count]['Kmin']=np.min(searched_keys[R<R_max])
             else:
                 fit_params[WF_count]['Kmin']=10**np.min(E_roots)
