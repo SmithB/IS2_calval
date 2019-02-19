@@ -43,7 +43,8 @@ def read_ATM_file(fname, getCountAndReturn=False, shot0=0, nShots=np.Inf, readTX
     with h5py.File(fname,'r') as h5f:
         
         # figure out what shots to read
-        shotMax=h5f['/waveforms/twv/shot/gate_start'].size
+        #shotMax=h5f['/waveforms/twv/shot/gate_start'].size
+        shotMax=h5f['/laser/calrng'].size
         if getCountAndReturn:
             return shotMax
         
