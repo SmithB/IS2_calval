@@ -255,24 +255,6 @@ def main():
             out_h5['RX/p'][:, outShot0:outShot0+N_out] = rxData.p
 
         print("  shot=%d out of %d, N_keys=%d, dt=%5.1f" % (shot0+blocksize, start_vals[-1]+blocksize, len(catalogBuffer.keys()), delta_time))
-        if args.DOPLOT:
-            plt.figure();
-            plt.subplot(511)
-            plt.plot( D_out['A'], '.')
-            plt.ylabel('amplitude')
-            plt.subplot(512)
-            plt.plot(D_out['R']/D_out['A'], '.')
-            plt.ylabel('R/A')
-            plt.subplot(513)
-            plt.plot( D_out['sigma'], '.')
-            plt.ylabel('sigma')
-            plt.subplot(514)
-            plt.plot( D_out['delta_t'], '.')
-            plt.ylabel('delta_t')
-            plt.subplot(515)
-            plt.plot( D_out['K0'], '.')
-            plt.plot( D_out['Kmax'], '.')
-            plt.ylabel('K')
     print("   time to fit RX=%3.2f" % (time()-time_old))
 
     if args.waveforms:
