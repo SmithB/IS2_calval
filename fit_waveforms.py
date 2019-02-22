@@ -5,9 +5,10 @@ Created on Mon Nov  5 16:56:31 2018
 @author: ben
 """
 import numpy as np
-from numpy.linalg import inv
+#from numpy.linalg import inv
 import matplotlib.pyplot as plt
-import bisect
+#import bisect
+import sys
 from IS2_calval.waveform import waveform
 from time import time
 DOPLOT=False
@@ -257,25 +258,38 @@ def broadened_misfit(delta_ts, sigma, WF, catalog, M, key_top,  t_tol=None):
                 catalog[this_key]=waveform(catalog[key_top].t, np.convolve(catalog[key_top].p.ravel(), K,'same'))
         return fit_shifted(delta_ts, sigma, catalog, WF,  M, key_top, t_tol=t_tol)
 
-def fit_broadened(  delta_ts, sigmas, catalog, WF,  M, key_top,  t_tol=None, sigma_last=None):
+def fit_broadened(delta_ts, sigmas, catalog, WF,  M, key_top, sigma_tol=None, sigma_max=5., t_tol=None, sigma_last=None):
     """
     Find the best broadening value that minimizes the misfit between a template and a waveform
     """
     if key_top not in M:
         M[key_top]=listDict()
     fSigma = lambda sigma:broadened_misfit(delta_ts, sigma, WF, catalog, M, key_top, t_tol=t_tol)
-    dSigma=sigmas[1]-sigmas[0]
+    sigma_step=2*sigma_tol
+    FWHM2sigma=2.355
+    if sigmas is None:
+        sigma_template=catalog[key_top].fwhm()[0]/FWHM2sigma
+        sigma_WF=WF.fwhm()[0]/FWHM2sigma
+        sigma0=sigma_step*np.ceil(np.sqrt(np.maximum(0,  sigma_WF**2-sigma_template**2))/sigma_step)
+        dSigma=np.maximum(sigma_step, np.ceil(sigma0/4.))
+        sigmas=np.array([0., np.maximum(sigma_step, sigma0-dSigma), np.maximum(sigma_step, sigma0+dSigma)])
+    else:
+        dSigma=np.max(sigmas)[0]/4.
+    if np.any(~np.isfinite(sigmas)):
+        print("NaN in sigma for %d " % WF.shots)
+    if sigma_tol is None:
+        sigma_tol=.125
     if sigma_last is not None:
         i1=np.maximum(1, np.argmin(np.abs(sigmas-sigma_last)))
     else:
         i1=1
     sigma_list=[sigmas[0], sigmas[i1]]
-    sigma_best, R_best = golden_section_search(fSigma, sigma_list, dSigma, bnds=[0, sigmas.max()], tol=dSigma/2, max_count=20)
+    sigma_best, R_best = golden_section_search(fSigma, sigma_list, dSigma, bnds=[0, sigma_max], tol=sigma_tol, max_count=20)
     this_key=key_top+[sigma_best]
     M[key_top]['best']={'key':this_key,'R':R_best}
     return R_best
 
-def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=False, return_catalog=False, catalog=None):
+def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, sigma_tol=None, return_data_est=False, return_catalog=False, catalog=None):
     """
     Search a library of waveforms for the best match between the broadened, shifted library waveform
     and the target waveforms
@@ -306,7 +320,8 @@ def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=F
     # set a sensible tolerance for delta_t if none is specified
     if t_tol is None:
         t_tol=WFs.dt*0.1
-
+    if sigma_tol is None:
+        sigma_tol=0.25
     # make an empty output_dictionary
     WFp_empty={f:np.NaN for f in ['K0','R','A','B','delta_t','sigma','t0','Kmin','Kmax','shot']}
     if return_data_est:
@@ -316,6 +331,20 @@ def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=F
     if catalog is None:
         catalog=listDict()
     keys=np.sort(list(catalog_in))
+    
+    # loop over the library of templates
+    for ii, kk in enumerate(keys):
+        # check if we've searched this template before, otherwise copy it into
+        # the library of checked templates
+        if [kk] not in catalog:
+            # make a copy of the current template
+            temp=catalog_in[kk]
+            catalog[[kk]]=waveform(temp.t, temp.p, t0=temp.t0, tc=temp.tc)        
+    
+    W_catalog=np.zeros(keys.shape)
+    for ind, key in enumerate(keys):
+        W_catalog[ind]=catalog_in[key].fwhm()[0]
+    
     fit_params=[WFp_empty.copy() for ii in range(WFs.size)]
     sigma_last=None
     t_center=WFs.t.mean()
@@ -331,65 +360,71 @@ def fit_catalog(WFs, catalog_in, sigmas, delta_ts, t_tol=None, return_data_est=F
  
         # set up a matching dictionary (contains keys of waveforms and their misfits)
         M=listDict()
-     
-        # loop over the library of templates
-        for ii, kk in enumerate(keys):
-            # check if we've searched this template before, otherwise copy it into
-            # the library of checked templates
-            if [kk] not in catalog:
-                # make a copy of the current template
-                temp=catalog_in[kk]
-                catalog[[kk]]=waveform(temp.t, temp.p, t0=temp.t0, tc=temp.tc)
-        if len(keys)>1:            
-             # find the best misfit between this template and the waveform
-            fB=lambda ind: fit_broadened(delta_ts, sigmas, catalog, WF, M, [keys[ind]], t_tol=t_tol, sigma_last=sigma_last)
-            iBest, Rbest = golden_section_search(fB, [2, 4], delta_x=2, bnds=[0, len(keys)-1], integer_steps=True, tol=1)
-            iBest=int(iBest)             
-        else:
-            Rbest=fit_broadened(delta_ts, sigmas, catalog, WF, M, [keys[0]], t_tol=t_tol, sigma_last=sigma_last)
-            iBest=0
-        this_key=[keys[iBest]]    
-        M['best']={'key':this_key, 'R':Rbest}        
-        searched_keys = np.array([this_key for this_key in keys if [this_key] in M])
-        R=np.array([M[[ki]]['best']['R'] for ki in searched_keys])
-          
-        # recursively traverse the M dict for the best match.  The lowest-level match
-        # will not have a 'best' entry
-        while 'best' in M[this_key]:
-            this_key=M[this_key]['best']['key']
-        # write out the best model information
-        fit_params[WF_count].update(M[this_key])
-        fit_params[WF_count]['delta_t'] -= WF.t0[0]
-        fit_params[WF_count]['shot'] = WF.shots[0]
-        sigma_last=M[this_key]['sigma']
-        R_max=fit_params[WF_count]['R']*(1.+1./np.sqrt(WF.t.size))
-        if np.sum(searched_keys>0)>=3:
-            these=np.where(searched_keys>0)[0]
-            if len(these) > 3:
-                 ind_keys=np.argsort(R[these])
-                 these=these[ind_keys[0:4]]
-            E_roots=np.polynomial.polynomial.Polynomial.fit(np.log10(searched_keys[these]), R[these]-R_max, 2).roots()
-            if np.any(np.imag(E_roots)!=0):
-                fit_params[WF_count]['Kmax']=10**np.minimum(3,np.polynomial.polynomial.Polynomial.fit(np.log10(searched_keys[these]), R[these]-R_max, 1).roots()[0])
-                fit_params[WF_count]['Kmin']=np.min(searched_keys[R<R_max])
+        # this is the bulk of the work, and it's where problems happen.  Wrap it in a try:
+        # and write out errors to be examined later
+        try:
+            if len(keys)>1:            
+                 # find the best misfit between this template and the waveform
+                fB=lambda ind: fit_broadened(delta_ts, None, catalog, WF, M, [keys[ind]], sigma_tol=sigma_tol, t_tol=t_tol, sigma_last=sigma_last)
+                W_match_ind=np.where(W_catalog >= WF.fwhm()[0])[0]
+                if len(W_match_ind) >0:
+                    ind=np.array(tuple(set([0, W_match_ind[0]-2,  W_match_ind[0]+2])))
+                    ind=ind[(ind>0) & (ind<len(keys))]
+                else:
+                    ind=[2, 4]
+                iBest, Rbest = golden_section_search(fB, ind, delta_x=2, bnds=[0, len(keys)-1], integer_steps=True, tol=1)
+                iBest=int(iBest)             
             else:
-                fit_params[WF_count]['Kmin']=10**np.min(E_roots)
-                fit_params[WF_count]['Kmax']=10**np.max(E_roots)
-        if (0. in searched_keys) and R[searched_keys==0]<R_max:
-            fit_params[WF_count]['Kmin']=0.
-            
-        #print(this_key+[R[iR][0]])
-        if return_data_est or DOPLOT:
-            #             wf_misfit(delta_t, sigma, WF, catalog, M, key_top, G=None, return_data_est=False):
-            WF.t=WF.t-WF.t0
-            R0, wf_est=wf_misfit(fit_params[WF_count]['delta_t'], fit_params[WF_count]['sigma'], WFs[WF_count], catalog, M, [this_key[0]], return_data_est=True)
-            fit_params[WF_count]['wf_est']=wf_est#integer_shift(wf_est, -delta_samp)
-        if DOPLOT:
-            plt.figure();
-            plt.plot(WF.t, integer_shift(WF.p, delta_samp),'k.')
-            plt.plot(WF.t, wf_est,'r')
-            plt.title('K=%f, dt=%f, sigma=%f, R=%f' % (this_key[0], fit_params[WF_count]['delta_t'], fit_params[WF_count]['sigma'], fit_params[WF_count]['R']))
-            print(WF_count)
+                Rbest=fit_broadened(delta_ts, None, catalog, WF, M, [keys[0]], sigma_tol=sigma_tol, t_tol=t_tol, sigma_last=sigma_last)
+                iBest=0
+            this_key=[keys[iBest]]    
+            M['best']={'key':this_key, 'R':Rbest}        
+            searched_keys = np.array([this_key for this_key in keys if [this_key] in M])
+            R=np.array([M[[ki]]['best']['R'] for ki in searched_keys])
+              
+            # recursively traverse the M dict for the best match.  The lowest-level match
+            # will not have a 'best' entry
+            while 'best' in M[this_key]:
+                this_key=M[this_key]['best']['key']
+            # write out the best model information
+            fit_params[WF_count].update(M[this_key])
+            fit_params[WF_count]['delta_t'] -= WF.t0[0]
+            fit_params[WF_count]['shot'] = WF.shots[0]
+            sigma_last=M[this_key]['sigma']
+            R_max=fit_params[WF_count]['R']*(1.+1./np.sqrt(WF.t.size))
+            if np.sum(searched_keys>0)>=3:
+                these=np.where(searched_keys>0)[0]
+                if len(these) > 3:
+                     ind_keys=np.argsort(R[these])
+                     these=these[ind_keys[0:4]]
+                E_roots=np.polynomial.polynomial.Polynomial.fit(np.log10(searched_keys[these]), R[these]-R_max, 2).roots()
+                if np.any(np.imag(E_roots)!=0):
+                    fit_params[WF_count]['Kmax']=10**np.minimum(3,np.polynomial.polynomial.Polynomial.fit(np.log10(searched_keys[these]), R[these]-R_max, 1).roots()[0])
+                    fit_params[WF_count]['Kmin']=np.min(searched_keys[R<R_max])
+                else:
+                    fit_params[WF_count]['Kmin']=10**np.min(E_roots)
+                    fit_params[WF_count]['Kmax']=10**np.max(E_roots)
+            if (0. in searched_keys) and R[searched_keys==0]<R_max:
+                fit_params[WF_count]['Kmin']=0.
+                
+            #print(this_key+[R[iR][0]])
+            if return_data_est or DOPLOT:
+                #             wf_misfit(delta_t, sigma, WF, catalog, M, key_top, G=None, return_data_est=False):
+                WF.t=WF.t-WF.t0
+                R0, wf_est=wf_misfit(fit_params[WF_count]['delta_t'], fit_params[WF_count]['sigma'], WFs[WF_count], catalog, M, [this_key[0]], return_data_est=True)
+                fit_params[WF_count]['wf_est']=wf_est#integer_shift(wf_est, -delta_samp)
+            if DOPLOT:
+                plt.figure();
+                plt.plot(WF.t, integer_shift(WF.p, delta_samp),'k.')
+                plt.plot(WF.t, wf_est,'r')
+                plt.title('K=%f, dt=%f, sigma=%f, R=%f' % (this_key[0], fit_params[WF_count]['delta_t'], fit_params[WF_count]['sigma'], fit_params[WF_count]['R']))
+                print(WF_count)
+        except KeyboardInterrupt:
+            sys.exit()
+        except Exception as e:
+            print("Exception thrown for shot %d" % WF.shots)
+            print(e)
+            pass
         if np.mod(WF_count, 1000)==0 and WF_count > 0:
             print('    N=%d, N_keys=%d' % (WF_count, len(list(catalog))))
 

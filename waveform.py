@@ -79,7 +79,7 @@ class waveform(object):
         return (lowHigh[1]-lowHigh[0])/2.
 
     def count_peaks(self, threshold=0.25, W=3, return_indices=False):
-        K=gaussian(np.arange(-4*W, 4*W+1), 0, W)
+        K=gaussian(np.arange(-3*W, 3*W+1), 0, W)
         N=np.zeros(self.size)
         if return_indices:
             peak_list=list()
