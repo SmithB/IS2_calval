@@ -88,6 +88,7 @@ def get_tx_est(filename, nShots=np.Inf, TX0=None, source='TX', pMin=50, skip_n_t
     # put together the shifted transmit pulses that passed muster
     all_shifted_TX = np.c_[all_shifted_TX]
     TX = copy.copy(TX0)
+    all_shifted_TX[~np.isfinite(all_shifted_TX)]=0.
     TX.p = np.nanmean(all_shifted_TX, axis=0).reshape(TX0.t.shape)
     TX.p = np.interp(TX.t.ravel(), TX.t.ravel()-TX.nSigmaMean()[0], TX.p.ravel()).reshape(TX.t.shape)
     TX.tc = np.array(TX.nSigmaMean()[0])
