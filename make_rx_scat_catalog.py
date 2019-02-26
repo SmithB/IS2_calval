@@ -22,6 +22,7 @@ def make_rx_scat_catalog(TX, h5_file=None):
         z=np.zeros_like(t0)
         z[np.argmin(abs(t0))]=1;
         TXc=np.convolve(TX.p.ravel(), z, 'full')    
+        TX.p[~np.isfinite(TX.p)]=0.
         t_full=np.arange(TXc.size)*0.25
         t_full -= waveform(t_full, TXc).nSigmaMean()[0]
         RX=dict()
