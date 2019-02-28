@@ -69,7 +69,7 @@ class waveform(object):
             return np.interp(P, C/C[-1], self.t[els])
         else:
             C=np.cumsum(self.p)
-            return np.interp(P, C/C[-1], self.t)
+            return np.interp(P, C/C[-1], self.t.ravel())
 
     def robust_spread(self, els=None):
         """
