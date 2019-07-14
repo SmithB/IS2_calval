@@ -7,85 +7,70 @@ Created on Fri Feb  1 23:51:17 2019
 """
 import numpy as np
 import matplotlib.pyplot as plt
-def crossPoint(A, B):
-    A0, B0=np.meshgrid(A[0:-1], B[0:-1])
-    A1, B1=np.meshgrid(A[1:], B[1:])
-    dA=A1-A0
-    dB=B1-B0
+from PointDatabase import point_data
+def x_point(A, B):
+
+    dA=A[-1]-A[0]
+    dB=B[-1]-B[0]
     det=-np.imag(dA*(dB.conjugate()))
-    dAB0=A0-B0
+    dAB0=A[0]-B[0]
     lA=np.imag(dAB0*(dB.conjugate()))/det
     lB=np.imag(dAB0*(dA.conjugate()))/det
 
-    goodXOs=(lA>=0) & (lA<=1) & (lB>=0) & (lB<=1)
-    iB, iA=np.where(goodXOs)
+    if (lA <0 ) or (lA >1) or (lB<0) or (lB >1):
+        return None, None, None
 
-    if len(iA)==0 or len(iB)==0:
-        return None, None, None, None
+    return lA, lB, A[0]+lA*dA
 
-    lA=lA[iB, iA]
-    lB=lB[iB, iA]
-    Ai=A[iA]*(1-lA)+A[iA+1]*lA
-    Bi=B[iB]*(1-lB)+B[iB+1]*lB
+def reduce_interval(t, f, ind, mode='largest'):
+    ti=np.array([t[ind][0], t[ind][1]])
+    tf=t[ind[0]]+(ti[1]-ti[0])*f
+    if mode == 'both':
+        ind=[np.maximum(0, first_true(t>tf)-1),
+            np.minimum(len(t)-1, first_true(t>tf))]
+        return ind
+    if tf-ti[0] > ti[1]-tf:
+        # subdivide the first interval
+        ind[0]=np.minimum(ind[1]-1, np.where(t>(tf+ti[0])/2)[0][0])
+    else:
+        ind[1]=np.maximum(ind[0]+1, np.where(t<(tf+ti[1])/2)[0][-1] )
 
-    plt.plot(np.real(A), np.imag(A),'ro')
-    plt.plot(np.real(B), np.imag(B),'bo')
-
-    plt.plot(np.real(A[iA]), np.imag(A[iA]),'rx')
-    plt.plot(np.real(B[iB]), np.imag(B[iB]),'bx')
-    plt.plot(np.real(Ai), np.imag(Ai),'r*')
-    plt.plot(np.real(Bi), np.imag(Bi),'b*')
-
-    return iA[0], iB[0], lA, lB
-
-
-def crossPaths(D):
+def cross_paths(D):
     """
     Function that finds an intersection between two paths given in D.  The paths
-    may be dictionaries with entries 'x' and 'y', or structures, with fields .x
-    and .y.  Each must be dense (i.e. all elements must be present, no gaps allowed.
+    must be structures, with fields .x .y, and .time.  Each must be dense (i.e. all elements
+    must be present, no gaps allowed.
     """
-
-
     Dc=list()
-    time=list()
-    intervals=list()
-    tDeltas=np.zeros(2)
-    dt=np.zeros(2)
+    times=list()
+    inds=list()
     for ii, Di in enumerate(D):
-        if hasattr(Di,'x'):
-            Dc.append(Di.x+1j*Di.y)
-        else:
-            Dc.append(Di['x']+1j*Di['y'])
-        if hasattr(Di,'time'):
-            time.append(Di.time)
-        else:
-            time.append(Di['time'])
-        intervals.append([0, Dc[-1].size-1])
-        tDeltas[ii]=time[ii][-1]-time[ii][0]
-        dt[ii]=time[ii][1]-time[ii][0]
-    t_est=np.zeros(2)
-    while (intervals[0][-1]-intervals[0][0] >1) and (intervals[1][-1]-intervals[1][0] >1):
-        for interval in intervals:
-            if interval[-1]-interval[0]==1:
-                ind.append(interval)
-            else:
-                ind.append([interval[0], int(np.floor((interval[1]+interval[0])/2)), interval[1]])
-        l0=crossPoint(Dc[0][intervals[0]], Dc[1][intervals[1]])
-        if i0 is None or i1 is None:
-            return None, None
+        Dc.append(Di.x+1j*Di.y)
+        times.append(Di.time)
+        inds.append([0, len(Di.x)-1])
+    while (inds[0][-1]-inds[0][0] >1) and (inds[1][-1]-inds[1][0] >1):
+        plt.figure();
         for ii in [0, 1]:
-            t_est[ii]=time[ii][intervals[ii]].dot([1-l0[ii], l0[ii]])
-            intervals[ii]=[]
-
-        intervals[0]=[np.maximum([0, i0_est-deltas[0]]), np.minimum[Dc[0].size, i0_est+deltas[0]]]
-
-        deltas=np.ceil(deltas/2)
-    return intervals[0][0], intervals[1][0], l1, l2
+            plt.plot(D[ii].x[inds[ii][0]:inds[ii][1]+1], D[ii].y[inds[ii][0]:inds[ii][1]+1])
+            plt.plot(D[ii].x[inds[ii]], D[ii].y[inds[ii]])
+        F = x_point(Dc[0][inds[0]], Dc[1][inds[1]])
+        if F[0] is None or F[1] is None:
+            return None, None
+        # try to reduce the interval to the segments adjacent to the estimated location from cross_point
+        iTemp=[[], []]
+        for ii in [0, 1]:
+            iTemp[ii]=reduce_interval(times[ii], F[ii], inds[ii].copy(), mode='both')
+        F1=x_point(Dc[0][iTemp[0]], Dc[1][iTemp[1]])
+        if F1[0] is not None and F1[1] is not None:
+            return iTemp, F1
+        # if reducing  to the single segment did not work, split the largest inteval, and continue
+        for ii in [0, 1]:
+            reduce_interval(times[ii], F[ii], inds[ii])
+    return inds, F
 
 
 import matplotlib.pyplot as plt
-x0=np.arange(-11, 13, 2)
+x0=np.arange(0, 13, 2)
 y0=0.1*(x0*2)**2-2
 x1=np.arange(0.5, 5.2, 1.)
 y1=-(x1**2)+x1+5
@@ -94,8 +79,12 @@ plt.figure()
 plt.plot(x0, y0)
 plt.plot(x1, y1)
 
-i0, i1, l0, l1=crossPaths([{'x':x0, 'y':y0}, {'x':x1, 'y':y1}])
+D=[point_data().from_dict({'x':x0, 'y':y0, 'time':np.arange(len(x0))}),
+   point_data().from_dict({'x':x1, 'y':y1, 'time':np.arange(len(x1))})]
 
-print(x0[i0:i0+2].dot([1-l0, l0]) - x1[i1:i1+2].dot([1-l1, l1]))
-print(y0[i0:i0+2].dot([1-l0, l0]) - y1[i1:i1+2].dot([1-l1, l1]))
+
+ii, f=cross_paths(D)
+
+print(x0[ii[0]:ii[0]+2].dot([1-f[0], f[0]]) - x1[ii[1]:ii[1]+2].dot([1-f[1], f[1]]))
+print(y0[ii[0]:ii[0]+2].dot([1-f[0], f[0]]) - y1[ii[1]:ii[1]+2].dot([1-f[1], f[1]]))
 
