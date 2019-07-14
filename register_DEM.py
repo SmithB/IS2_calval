@@ -7,7 +7,7 @@ Created on Sun Dec 23 09:02:21 2018
 """
 import numpy as np
 from IS2_calval.read_DEM import read_DEM
-from ATL11.pt_blockmedian import pt_blockmedian
+from PointDatabase.pt_blockmedian import pt_blockmedian
 import matplotlib.pyplot as plt
 import osgeo
 import scipy.interpolate as sI
@@ -16,8 +16,8 @@ import argparse
 import h5py
 import sys
 import os
-from ATL11.ATL06_data import ATL06_data
-import ATL11.ATL06_filters as f06
+from PointDatabase.ATL06_data import ATL06_data
+import PointDatabase.ATL06_filters as f06
 
 def validate_xi(xy, xy0):
     # identify points that are inside an interpolation grid
@@ -27,21 +27,22 @@ def validate_xi(xy, xy0):
     return good
 
 def queryIndex(index_file, demFile, verbose=False):
-    from ATL11.geo_index import geo_index
+    from PointDatabase.geo_index import geo_index
     from IS2_calval.demBounds import demBounds
   
     pointData=dict()
     beam_names=['l','r']
     field_dict={None:['delta_time','h_li','h_li_sigma','latitude','longitude'], 
-                    'fit_statistics':['dh_fit_dx', 'h_rms_misfit','h_robust_sprd','n_fit_photons', 'signal_selection_source','snr_significance','w_surface_window_final'],
+                    'geophysical':['dac'],                
+                    'fit_statistics':['dh_fit_dx', 'h_rms_misfit','h_robust_sprd','n_fit_photons', 'h_mean', 'signal_selection_source','snr_significance','w_surface_window_final'],
                     'derived':['valid']}
     gI=geo_index().from_file(index_file)
     xr, yr = demBounds( demFile, proj4=gI.attrs['SRS_proj4'] )
     xr += np.array([-1e4, 1e4])
     yr += np.array([-1e4, 1e4])
     xy=gI.bins_as_array()
-    plt.figure(); plt.plot(xy[0], xy[1],'k.')
-    plt.plot(xr[[0, 1, 1, 0, 0]], yr[[0, 0, 1, 1, 0]],'r')
+    #plt.figure(); plt.plot(xy[0], xy[1],'k.')
+    #plt.plot(xr[[0, 1, 1, 0, 0]], yr[[0, 0, 1, 1, 0]],'r')
     D6es=gI.query_xy_box( xr, yr, get_data=True, fields=field_dict)
     if verbose:
         temp=gI.query_xy_box( xr+np.array([-1e4, 1e4]), yr+np.array([-1e4, 1e4]), get_data=False)
@@ -62,7 +63,7 @@ def queryIndex(index_file, demFile, verbose=False):
                 AD=np.sign(D6.latitude[last, beam]-D6.latitude[first, beam])
                 this_name="%s:gt%d%s" % (os.path.basename(D6.file), D6.beam_pair, beam_names[beam])
                 
-                pointData[this_name]={'latitude':D6.latitude[:, beam], 'longitude':D6.longitude[:,beam],'h':D6.h_li[:,beam],'delta_time':D6.delta_time[:, beam],'AD':AD+np.zeros_like(D6.delta_time), 'orbit':D6.orbit+np.zeros_like(D6.delta_time)}
+                pointData[this_name]={'latitude':D6.latitude[:, beam], 'longitude':D6.longitude[:,beam],'h':D6.h_mean[:,beam]+D6.dac[:,beam],'delta_time':D6.delta_time[:, beam],'AD':AD+np.zeros_like(D6.delta_time), 'orbit':D6.orbit+np.zeros_like(D6.delta_time)}
              
     return pointData
     
@@ -88,6 +89,7 @@ def readPointData(args):
         h5f.close()
     elif args.ATL06 is True:        
         field_dict={None:['delta_time','h_li','h_li_sigma','latitude','longitude'], 
+                    'geophysical':['dac'],
                 'fit_statistics':['dh_fit_dx', 'h_rms_misfit','h_robust_sprd','n_fit_photons', 'signal_selection_source','snr_significance','w_surface_window_final', 'h_mean'],
                 'derived':['valid']}
 
@@ -253,7 +255,7 @@ def register_DEM(DEM,  projSys, pointData, max_shift=500, delta_initial=50, delt
     # evaluate the lag-zero shift and eliminate the largest residuals
     R0, N0, biasSlope0, validIndex = evaluate_shift(np.array([0., 0.]), basis_vectors, Dsub, gI, inATC, iterateTSE=5)
 
-    if np.max(Dsub['h'][validIndex])-np.min(Dsub['h'][validIndex]) < 10:
+    if np.sum(validIndex) < 10 or np.max(Dsub['h'][validIndex])-np.min(Dsub['h'][validIndex]) < 10: 
         print("not enough topography to allow a match")
         return dict(), None, None, xyRaw
     

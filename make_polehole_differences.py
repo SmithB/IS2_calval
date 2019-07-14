@@ -10,7 +10,8 @@ Created on Wed Sep  5 13:36:08 2018
 
 @author: ben
 """
-from PointDatabase.geo_index import geo_index, index_list_for_files, unique_points
+from PointDatabase.geo_index import geo_index, unique_points
+#from PointDatabase import ATL06_filters
 from ATL11.RDE import RDE
 import matplotlib.pyplot as plt
 from osgeo import osr
@@ -18,16 +19,19 @@ import numpy as np
 import h5py
 import os
 import sys
-from ATL11.pt_blockmedian import pt_blockmedian
-from PointDatabase.ATL06_data import ATL06_data
-from PointDatabase.qfit_data import Qfit_data
+#from ATL11.pt_blockmedian import pt_blockmedian
+from PointDatabase import ATL06_data, Qfit_data, pt_blockmedian
+#from PointDatabase.qfit_data import Qfit_data
 
 import matplotlib.pyplot as plt
 DOPLOT=False
 VERBOSE=False
 
 def my_lsfit(G, d):
-    m0=np.linalg.lstsq(G, d)
+    try:
+        m0=np.linalg.lstsq(G, d)#, rcond=None)
+    except ValueError:
+        print("ValueError in LSq")
     m=m0[0]
     r=d-G.dot(m)
     R=np.sqrt(np.sum(r**2)/(d.size-G.shape[1]))
@@ -54,32 +58,41 @@ def blockmedian_for_qsub(Qdata, delta):
     return Qdata
 
 sigma_pulse=5.5
+#ATM_dir='/Volumes/ice2/ben/ATM_WF/Bootleg/20181112_old/20181112_ATM6aT6_rev01/';waveform_format=True
+#ATM_dir='/Volumes/ice2/ben/ATM_WF/Bootleg/20181112/20181112_ATM6aT6_rev02/';waveform_format=True
+#ATM_dir='/Volumes/ice2/ben/ATM_Qfit/Antarctica_2016/2016.10.26/'; waveform_format=False
+ATM_dir='/Volumes/ice2/ben/ATM_Qfit/Antarctica_2016/2016.11.15/';  waveform_format=False
 
-ATM_top='/Volumes/ice2/ben/ATM_WF/Bootleg'
 version=sys.argv[1]
-#ATM_name='20181114_ATM6aT6_rev01'
-#ATM_day="20181114"
-ATM_name='20181112_ATM6aT6_rev01'
-ATM_day="20181112"
 
-Qfit_index=ATM_top+'/'+ATM_day+'/'+ATM_name+'/index_1km/GeoIndex.h5'
-out_dir=ATM_top+'/'+ATM_day+'/'+ATM_name+'/xovers'
+print("working on ATL06 version %s, ATM directory %s" % (version, ATM_dir))
+
+if waveform_format:
+    Qfit_fields = ['latitude', 'longitude', 'elevation', 'seconds_of_day', 'days_J2K']
+else:
+    Qfit_fields=['latitude','longitude','elevation','rel_time']
+ 
+Qfit_index=ATM_dir+'/index_1km/GeoIndex.h5'
+out_dir=ATM_dir+'/xovers'
 if not os.path.isdir(out_dir):
     os.mkdir(out_dir)
-out_file=out_dir+'/vs_'+version+'.h5';    
+out_file='%s/vs_%s.h5' %(out_dir, version.replace('/', '_'))
     
-ATL06_index='/Volumes/ice2/ben/scf/AA_06/ASAS/'+version+'/index/GeoIndex.h5'
+ATL06_index='/Volumes/ice2/ben/scf/AA_06/'+version+'/index/GeoIndex.h5'
 
 SRS_proj4='+proj=stere +lat_0=-90 +lat_ts=-71 +lon_0=0 +k=1 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs'
 ATL06_field_dict={None:['delta_time','h_li','h_li_sigma','latitude','longitude','segment_id','sigma_geo_h','atl06_quality_summary'], 
             'ground_track':['x_atc', 'y_atc','seg_azimuth','sigma_geo_at','sigma_geo_xt'],
-            'fit_statistics':['dh_fit_dx','dh_fit_dx_sigma','dh_fit_dy','h_rms_misfit','h_robust_sprd','n_fit_photons','w_surface_window_final','snr_significance'],
-            'orbit_info':['rgt']}
+            'geophysical':['dac'],
+            'bias_correction':['fpb_n_corr'],
+            'fit_statistics':['dh_fit_dx','dh_fit_dx_sigma','dh_fit_dy','h_mean', 'h_rms_misfit','h_robust_sprd','n_fit_photons','w_surface_window_final','snr_significance'],
+            'orbit_info':['rgt','orbit_number'],
+            'derived': ['BP','spot']}
+
 ATL06_fields=list()
 for key in ATL06_field_dict:   
     ATL06_fields+=ATL06_field_dict[key]
             
-Qfit_fields = ['latitude', 'longitude', 'elevation', 'seconds_of_day', 'days_J2K']
 ps_srs=osr.SpatialReference()
 ps_srs.ImportFromProj4(SRS_proj4)
 ll_srs=osr.SpatialReference()
@@ -91,18 +104,20 @@ WGS84b=6356752.31424
 d2r=np.pi/180.
 delta=[10000., 10000.]
   
-Q_GI=geo_index(SRS_proj4=SRS_proj4).from_file(Qfit_index)
-D6_GI=geo_index(SRS_proj4=SRS_proj4).from_file(ATL06_index)
+Q_GI=geo_index(SRS_proj4=SRS_proj4).from_file(Qfit_index, read_file=True)
+D6_GI=geo_index(SRS_proj4=SRS_proj4).from_file(ATL06_index, read_file=True)
 # the qfit index is at 1 km , the ATL06 index is at 10 km. find the overlap between the two
 # Interesect the ATL06 index with the Qfit index
-xy_10km_Q=unique_points(Q_GI.bins_as_array())
+xy_10km_Q=unique_points(Q_GI.bins_as_array(), delta=delta)
 D6_GI=D6_GI.copy_subset(xyBin=xy_10km_Q)
 
 out_fields=[ 
-    'segment_id','x','y','beam', 'beam_pair', 'h_li', 'h_li_sigma', 'atl06_quality_summary', 
+    'segment_id','x','y','beam', 'BP', 'h_li', 'h_li_sigma', 'atl06_quality_summary', 
+    'dac', 'rgt','orbit_number','spot',
     'dh_fit_dx','N_50m','N_seg','h_qfit_seg','dh_qfit_dx','dh_qfit_dy', 
     'h_robust_sprd', 'snr_significance',
     'h_qfit_50m','sigma_qfit_50m', 'sigma_seg','dz_50m','E_seg','RDE_seg',
+    'hbar_20m',
     'RDE_50m','t_seg','t_qfit','y_atc', 'x_seg_mean', 'y_seg_mean']
 out_template={f:np.NaN for f in out_fields}
 out=list()
@@ -114,7 +129,7 @@ for bin_name in D6_GI.keys():
     bin_xy=[int(coord) for coord in bin_name.split('_')]
     # query the Qfit index to get all the data for the current bin
     Qlist=Q_GI.query_xy([[bin_xy[0]], [bin_xy[1]]], pad=6, get_data=True, strict=True, fields=Qfit_fields)
-    Qsub=Qfit_data(waveform_format=True).from_list(Qlist).get_xy(SRS_proj4)
+    Qsub=Qfit_data(waveform_format=waveform_format).from_list(Qlist).get_xy(SRS_proj4)
     Qsub=blockmedian_for_qsub(Qsub, 5)
     # the geo index works much better (more selective) if the Qfit data are sorted by geobin
     x0=np.round(Qsub.x/100.)*100
@@ -124,24 +139,18 @@ for bin_name in D6_GI.keys():
     # index the sorted Qfit data
     GI_Qsub=geo_index(delta=[100, 100]).from_xy([Qsub.x, Qsub.y])
     
-    # query ATL06 for the current bin, and index it
-    
-    D6list=D6_GI.query_xy([[bin_xy[0]], [bin_xy[1]]], get_data=True, fields=ATL06_fields)
+    # query ATL06 for the current bin, and index it    
+    D6list=D6_GI.query_xy([[bin_xy[0]], [bin_xy[1]]], get_data=True, fields=ATL06_field_dict)
     if not isinstance(D6list, list):
         D6list=[D6list]
-    for item in D6list:
-        item.BP=np.zeros_like(item.latitude)+item.beam_pair
-        item.rgt=np.zeros_like(item.latitude)+item.rgt
-        item.list_of_fields.append('BP')
         
     KK=ATL06_field_dict.copy()
-    KK['Derived']=['BP']
     D6sub=ATL06_data(field_dict=KK).from_list(D6list).get_xy(SRS_proj4).get_xy(SRS_proj4)
     x0=np.round(np.nanmean(D6sub.x, axis=1)/100.)*100
     y0=np.round(np.nanmean(D6sub.y, axis=1)/100.)*100
     iB=np.argsort(x0+(y0-y0.min())/(y0.max()-y0.min()))
     D6sub.index(iB)
-    # index the sorted ATL06 data
+    # index the sorted ATL06 data at 100 m
     GI_D6sub=geo_index(delta=[100, 100]).from_xy([np.nanmean(D6sub.x, axis=1), np.nanmean(D6sub.y, axis=1)])
     
     # find the common bins at 100 m
@@ -168,10 +177,10 @@ for bin_name in D6_GI.keys():
             for ii in qQ.keys():
                 for iStart, iEnd in zip(qQ[ii]['offset_start'], qQ[ii]['offset_end']):
                     Qlist.append(Qsub.subset(np.arange(iStart, iEnd, dtype=int)))
-            Qdata=Qfit_data(waveform_format=True).from_list(Qlist)
-            
+            Qdata=Qfit_data(waveform_format=waveform_format).from_list(Qlist)
+            Qdata.index(np.isfinite(Qdata.elevation) & np.isfinite(Qdata.latitude) & np.isfinite(Qdata.longitude))
             for beam in [0,1]:
-                if not np.isfinite(D6i.h_li[beam]):
+                if not (np.isfinite(D6i.h_li[beam]) &  np.isfinite(D6i.latitude[beam]) & np.isfinite(D6i.longitude[beam])):
                     continue
 
                 # calculate the ellipsoid radius for the current point
@@ -191,6 +200,8 @@ for bin_name in D6_GI.keys():
                 
                 # calculate along-track vector and the across-track vector
                 this_az=D6i.seg_azimuth[beam]
+                if not np.isfinite(this_az):
+                    continue
                 at_vec=np.array([np.sin(this_az*d2r), np.cos(this_az*d2r)])
                 xt_vec=at_vec[[1,0]]*np.array([-1, 1])
                 
@@ -199,16 +210,22 @@ for bin_name in D6_GI.keys():
 
                 # copy the ATL06 values into the output template                                     
                 this_out=out_template.copy()                
-                copy_fields=['segment_id','x','y', 'dh_fit_dx', 'h_li','h_li_sigma',
-                             'atl06_quality_summary', 'w_surface_window_final','n_fit_photons',
-                             'delta_time', 'h_robust_sprd', 'snr_significance','y_atc','rgt']
+                copy_fields=['segment_id','x','y', 'dh_fit_dx', 'h_li','h_li_sigma', 'h_mean','orbit_number',
+                             'atl06_quality_summary', 'w_surface_window_final','n_fit_photons', 'fpb_n_corr',
+                             'delta_time', 'h_robust_sprd', 'snr_significance','y_atc','rgt','dac','spot']
 
                 for field in copy_fields:
                     this_out[field]=getattr(D6i, field)[beam]
                 
                 #fit a plane to all data within 50m of the point
                 G=np.c_[np.ones((ind_50m.sum(), 1)), xy_at]
-                m, R, sigma_hat=my_lsfit(G, z)
+                if not np.all(np.isfinite(G.ravel())):
+                    print("Bad G")
+                try:
+                    m, R, sigma_hat=my_lsfit(G, z)
+                except TypeError:
+                    print("LS failed")
+                    m, R, sigma_hat=my_lsfit(G, z)
                 this_out['sigma_qfit_50m']=R
                 this_out['h_qfit_50m']=m[0]
                 this_out['dh_qfit_dx']=m[1]
@@ -216,7 +233,11 @@ for bin_name in D6_GI.keys():
                 this_out['N_50m']=np.sum(ind_50m)
                 this_out['dz_50m']=D6i.h_li[beam]-m[0]
                 this_out['RDE_50m']=sigma_hat
-            
+                
+                ind_20m=np.sum(EN**2,axis=1)<20**2
+                if np.sum(ind_20m)> 5:
+                    this_out['hbar_20m']=np.nanmean(z[ind_20m])
+                
                 sub_seg=np.logical_and(np.abs(xy_at[:,1])<5, np.abs(xy_at[:,0])<30)
                 if np.sum(sub_seg)<10:
                     continue
@@ -237,6 +258,16 @@ for bin_name in D6_GI.keys():
                     print(this_out)
                     print('--------')
                 out.append(this_out)
+                if DOPLOT:
+                    plt.figure(1); plt.clf();  plt.plot(xy_at[sub_seg,0], z[sub_seg],'o'); plt.plot(xy_at[sub_seg,0], G.dot(m)); 
+                    plt.plot(0, D6i.h_li[beam]+D6i.dac[beam],'r*', markersize=12)
+                    plt.plot(0, D6i.h_mean[beam]+D6i.dac[beam],'k*', markersize=15)                    
+                    plt.xlabel('along-track x, m'); plt.ylabel('h, m')                    
+                    plt.figure(2); plt.clf();  plt.plot(EN[:,0], EN[:,1],'r.'); plt.plot(EN[sub_seg,0], EN[sub_seg,1],'bo'); plt.axis('equal'); 
+                    plt.plot(np.array([-20, 20])*at_vec[0], np.array([-20, 20])*at_vec[1])
+                    plt.xlabel('easting, m'); plt.ylabel('northing, m')
+                    
+                    plt.pause(2)
         #print("\t\tafter:%d" % len(out))
 
 D=dict()
