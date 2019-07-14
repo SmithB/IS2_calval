@@ -41,14 +41,14 @@ def read_ATM_file(fname, getCountAndReturn=False, shot0=0, nShots=np.Inf, readTX
     Read data from an ATM file
     """
     with h5py.File(fname,'r') as h5f:
-        
+
         # figure out what shots to read
         #shotMax=h5f['/waveforms/twv/shot/gate_start'].size
         shotMax=h5f['/laser/calrng'].size
         if getCountAndReturn:
             return shotMax
-        
-        nShots=np.minimum(shotMax-shot0, nShots)        
+
+        nShots=np.minimum(shotMax-shot0, nShots)
         shotN=np.int(shot0+nShots)
         shot0=np.int(shot0)
         # read in some of the data fields
@@ -58,10 +58,10 @@ def read_ATM_file(fname, getCountAndReturn=False, shot0=0, nShots=np.Inf, readTX
         for key in ('/waveforms/twv/gate/wvfm_start', '/waveforms/twv/gate/wvfm_length', '/waveforms/twv/gate/position',\
                     '/waveforms/twv/gate/pulse/count'):
             D_in[key]=np.array(h5f[key], dtype=int)
-        # read in the gate info for the shots we want to read    
+        # read in the gate info for the shots we want to read
         for key in( '/waveforms/twv/shot/gate_start', '/waveforms/twv/shot/gate_count', '/laser/gate_xmt', '/laser/gate_rcv', '/laser/calrng'):
             D_in[key]=np.array(h5f[key][shot0:shotN], dtype=int)
-            
+
         #read in the geolocation
         try:
             for key in ('footprint/latitude','footprint/longitude','footprint/elevation','/laser/scan_azimuth'):
@@ -70,7 +70,7 @@ def read_ATM_file(fname, getCountAndReturn=False, shot0=0, nShots=np.Inf, readTX
             pass
         # read the sampling interval
         dt=np.float64(h5f['/waveforms/twv/ancillary_data/sample_interval'])
-        
+
         # figure out what samples to read from the 'amplitude' dataset
         gate0=D_in['/waveforms/twv/shot/gate_start'][0]-1 + D_in['/laser/gate_xmt'][0]-1
         sample_start = D_in['/waveforms/twv/gate/wvfm_start'][gate0]-1
@@ -80,8 +80,8 @@ def read_ATM_file(fname, getCountAndReturn=False, shot0=0, nShots=np.Inf, readTX
         # subsequent indexes into the amplitude array
         key='/waveforms/twv/wvfm/amplitude'
         D_in[key]=np.array(h5f[key][sample_start:sample_end+1], dtype=int)
-        
-        
+
+
         TX=list()
         RX=list()
         tx_samp0=list()
@@ -94,7 +94,7 @@ def read_ATM_file(fname, getCountAndReturn=False, shot0=0, nShots=np.Inf, readTX
             if readTX:
                 TX.append(wfd['tx']['P'][0:160])
                 tx_samp0.append(wfd['tx']['pos'])
-            if readRX:  
+            if readRX:
                 nRX=np.minimum(190, wfd['rx']['P'].size)
                 rxBuffer[0:nRX]=wfd['rx']['P'][0:nRX]
                 rxBuffer[nRX+1:-1]=np.NaN
@@ -109,13 +109,13 @@ def read_ATM_file(fname, getCountAndReturn=False, shot0=0, nShots=np.Inf, readTX
         result['calrng']=D_in['/laser/calrng']
 
         if readTX:
-            TX=np.c_[TX].transpose() 
-            result['TX']=waveform(np.arange(TX.shape[0])*dt, TX, shots=shots)
-            
+            TX=np.c_[TX].transpose()
+            result['TX']=waveform(np.arange(TX.shape[0])*dt, TX, shots=shots, t0=tx_samp0*dt)
+
         if readRX:
             RX=np.c_[RX].transpose()
             nPeaks=np.c_[nPeaks].ravel()
-            result['RX']=waveform(np.arange(RX.shape[0])*dt, RX, shots=shots, nPeaks=nPeaks)
+            result['RX']=waveform(np.arange(RX.shape[0])*dt, RX, shots=shots, nPeaks=nPeaks, t0=rx_samp0*dt)
             result['rx_samp0']=rx_samp0
     return result
 
@@ -141,4 +141,4 @@ def est_mean_wf(P):
     wf_bar=np.mean(P1[:,good], axis=1)
     wf_sigma=np.std(P1[:,good], axis=1)
     return wf_bar, wf_sigma
-    
+

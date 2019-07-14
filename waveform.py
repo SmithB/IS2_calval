@@ -14,8 +14,8 @@ def gaussian(x, ctr, sigma):
     return 1/(sigma*np.sqrt(2*np.pi))*np.exp(-(x-ctr)**2/2/sigma**2)
 
 class waveform(object):
-    __slots__=['p','t','t0', 'dt', 'tc', 'size', 'nSamps', 'nPeaks','shots','params']
-    def __init__(self, t, p, t0=0, tc=0, nPeaks=1, shots=np.NaN):
+    __slots__=['p','t','t0', 'dt', 'tc', 'size', 'nSamps', 'nPeaks','shots','params','noise_RMS']
+    def __init__(self, t, p, t0=0, tc=0, nPeaks=1, shots=np.NaN, noise_RMS=np.NaN):
 
         self.t=t
         self.t.shape=[t.size,1]
@@ -26,8 +26,9 @@ class waveform(object):
         self.size=self.p.shape[1]
         self.nSamps=self.p.shape[0]
         self.params=dict()
+        self.noise_RMS=np.zeros(self.size)+np.NaN
 
-        kw_dict={'t0':t0, 'tc':tc, 'nPeaks':nPeaks,'shots':shots}
+        kw_dict={'t0':t0, 'tc':tc, 'nPeaks':nPeaks,'shots':shots, 'noise_RMS':noise_RMS}
         for key, val in kw_dict.items():
             if ~hasattr(val,'__len__') or val.size < self.size:
                 setattr(self, key, np.zeros(self.size, dtype=np.array(val).dtype)+val)
@@ -35,7 +36,7 @@ class waveform(object):
                 setattr(self, key, val)
 
     def __getitem__(self, key):
-        return waveform(self.t, self.p[:,key], t0=self.t0[key], tc=self.tc[key], nPeaks=self.nPeaks[key],shots=self.shots[key])
+        return waveform(self.t, self.p[:,key], t0=self.t0[key], tc=self.tc[key], nPeaks=self.nPeaks[key],shots=self.shots[key], noise_RMS=self.noise_RMS[key])
 
     def centroid(self, els=None, threshold=None):
         """
@@ -79,6 +80,9 @@ class waveform(object):
         return (lowHigh[1]-lowHigh[0])/2.
 
     def count_peaks(self, threshold=0.25, W=3, return_indices=False):
+        """
+        Count the peaks in a distribution
+        """
         K=gaussian(np.arange(-3*W, 3*W+1), 0, W)
         N=np.zeros(self.size)
         if return_indices:
@@ -129,21 +133,31 @@ class waveform(object):
         if t50_minus is not None:
             t50=self.t50()
             bgEst=np.zeros(self.size)
+            noiseEst=np.zeros(self.size)
             for ii in range(self.size):
                 bgind=np.where(self.t < t50[ii]-t50_minus)[0]
                 if len(bgind) > 1:
                     bgEst[ii]=np.nanmean(self.p[bgind, ii])
+                    noiseEst[ii]=np.nanstd(self.p[bgind, ii])
         else:
             bgEst=np.nanmean(self.p[bg_samps, :], axis=0)
+            noiseEst=np.nanstd(self.p[bg_samps,:], axis=0)
         self.p=self.p-bgEst
+        self.noise_RMS=noiseEst
         return self
 
     def normalize(self):
+        """
+        Normalize a distribution by its background-corrected maximum
+        """
         self.subBG()
         self.p=self.p/np.nanmax(self.p, axis=0)
         return self
 
     def t50(self):
+        """
+        Find the first 50%-max threshold crossing of a waveform
+        """
         t50=np.zeros(self.size)
         for col in np.arange(self.size):
             p=self.p[:,col]
@@ -154,6 +168,9 @@ class waveform(object):
         return t50
 
     def fwhm(self):
+        """
+        Calculate the full width at half max of a distribution
+        """
         FWHM=np.zeros(self.size)
         for col in np.arange(self.size):
             p=self.p[:,col]
@@ -167,12 +184,27 @@ class waveform(object):
             # linear interpolation between the last p>50 value and the next value
             i50=ii[-1]+1
             dp=(p50 - p[i50-1]) / (p[i50] - p[i50-1])
-            FWHM[col] = self.t[i50-1] + dp*self.dt - temp            
+            FWHM[col] = self.t[i50-1] + dp*self.dt - temp
         return FWHM
-    
+
     def calcMean(self, threshold=255):
+        """
+        Calculate the centroid of a distribution relative to a thresohold
+        """
         good=np.sum( (~np.isfinite(self.p)) & (self.p < threshold), axis=0) < 2
         return waveform(self.t, np.nanmean(self[good].normalize().p, axis=1))
-       
-      
+
+    def  threshold_centroid(self, fraction=0.38):
+        """
+        Calculate the centroid of the energy of a waveform where the amplitude is more than a fraction of the maximum
+        """
+        C=np.zeros(self.size)+np.NaN
+        t=self.t.ravel()
+        for col in np.arange(self.size):
+            p=self.p[:,col]
+            bins = (p>np.nanmax(p)*fraction) & np.isfinite(p)
+            if bins.sum() >= 2:
+                C[col] = np.sum(p[bins]*t[bins])/np.sum(p[bins])
+        return C
+
 
