@@ -8,7 +8,7 @@ Created on Thu May  2 09:56:05 2019
 import numpy as np
 import matplotlib.pyplot as plt
 import sys
-from LSsurf.unique_by_rows import unique_by_rows
+from unique_by_rows import unique_by_rows
 import pointCollection as pc
 import glob
 import re
